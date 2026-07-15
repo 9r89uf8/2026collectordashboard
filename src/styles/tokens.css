@@ -1,0 +1,65 @@
+:root {
+  color-scheme: dark;
+
+  --page: #080c12;
+  --page-deep: #05080d;
+  --panel: #111821;
+  --panel-raised: #16202b;
+  --panel-soft: #0d141c;
+  --panel-glass: rgba(17, 24, 33, 0.9);
+  --grid: #263341;
+  --grid-soft: rgba(141, 154, 170, 0.12);
+  --grid-strong: #354659;
+
+  --text: #ecf2f8;
+  --text-soft: #c8d2dc;
+  --muted: #8d9aaa;
+  --muted-deep: #667486;
+
+  --actual: #42c7e8;
+  --actual-soft: rgba(66, 199, 232, 0.13);
+  --projected: #f4b860;
+  --projected-soft: rgba(244, 184, 96, 0.13);
+  --baseline: #8793a3;
+  --threshold: #a78bfa;
+  --threshold-soft: rgba(167, 139, 250, 0.13);
+  --positive: #4fd18b;
+  --positive-soft: rgba(79, 209, 139, 0.12);
+  --negative: #ff7474;
+  --negative-soft: rgba(255, 116, 116, 0.12);
+  --warning: #f5c96a;
+  --warning-soft: rgba(245, 201, 106, 0.12);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+
+  --radius-sm: 5px;
+  --radius-md: 9px;
+  --radius-lg: 13px;
+  --radius-pill: 999px;
+  --shadow-panel: 0 16px 45px rgba(0, 0, 0, 0.2);
+  --shadow-float: 0 22px 65px rgba(0, 0, 0, 0.38);
+  --focus-ring: 0 0 0 3px rgba(66, 199, 232, 0.2);
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+
+  --content-max: 1600px;
+  --topbar-height: 62px;
+  --control-height: 38px;
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --grid: #405266;
+    --grid-soft: rgba(236, 242, 248, 0.2);
+    --muted: #aeb9c5;
+  }
+}
+

@@ -1,0 +1,266 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+  background: var(--page);
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums lining-nums;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0;
+  overflow-x: hidden;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 68% -12%, rgba(66, 199, 232, 0.055), transparent 31rem),
+    radial-gradient(circle at 12% 46%, rgba(167, 139, 250, 0.035), transparent 30rem),
+    linear-gradient(180deg, var(--page-deep), var(--page) 22rem);
+}
+
+button,
+input,
+select,
+textarea {
+  color: inherit;
+  font: inherit;
+}
+
+button {
+  font-variant-numeric: inherit;
+}
+
+a {
+  color: var(--actual);
+}
+
+::selection {
+  color: var(--text);
+  background: rgba(66, 199, 232, 0.25);
+}
+
+#app {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.dashboard-shell {
+  width: min(100%, var(--content-max));
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin-inline: auto;
+  padding: 0 clamp(0.75rem, 2vw, 1.75rem) 1rem;
+}
+
+.topbar {
+  min-height: var(--topbar-height);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  border-bottom: 1px solid var(--grid-soft);
+}
+
+.brand-block,
+.brand-copy,
+.connection-cluster,
+.market-navigator,
+.panel-heading,
+.card-header,
+.footer-model {
+  min-width: 0;
+}
+
+.brand-block,
+.connection-cluster,
+.market-navigator,
+.panel-heading,
+.footer-model {
+  display: flex;
+  align-items: center;
+}
+
+.brand-block {
+  gap: var(--space-3);
+}
+
+.connection-cluster {
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.market-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(250px, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 66px;
+  padding-block: var(--space-3);
+}
+
+.market-navigator {
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(270px, 322px);
+  align-items: stretch;
+  gap: var(--space-4);
+}
+
+.chart-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-heading {
+  justify-content: space-between;
+  gap: var(--space-5);
+}
+
+.chart-canvas {
+  width: 100%;
+  height: clamp(430px, calc(100dvh - 17.5rem), 760px);
+  min-height: 50vh;
+  flex: 1 1 auto;
+}
+
+.insight-rail {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  align-content: stretch;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.signal-card,
+.coverage-card {
+  min-width: 0;
+}
+
+.model-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, auto);
+  align-items: center;
+  gap: var(--space-5);
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-1) 0;
+}
+
+.footer-model {
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+.footer-disclaimer {
+  max-width: 52rem;
+  justify-self: end;
+  text-align: right;
+}
+
+@media (max-width: 1040px) {
+  .dashboard-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .insight-rail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: auto;
+  }
+
+  .chart-canvas {
+    height: max(52vh, 430px);
+  }
+}
+
+@media (max-width: 760px) {
+  .dashboard-shell {
+    padding-inline: 0.65rem;
+  }
+
+  .topbar {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+    padding-block: var(--space-3);
+  }
+
+  .connection-cluster {
+    justify-content: flex-start;
+    padding-left: 2.75rem;
+  }
+
+  .market-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-2);
+  }
+
+  .market-toolbar .mode-switch {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
+
+  .market-navigator {
+    justify-content: flex-start;
+  }
+
+  .panel-heading {
+    align-items: flex-start;
+  }
+
+  .insight-rail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .model-footer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .footer-disclaimer {
+    justify-self: start;
+    text-align: left;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard-shell {
+    padding-inline: 0;
+  }
+
+  .topbar,
+  .market-toolbar,
+  .model-footer {
+    margin-inline: 0.75rem;
+  }
+
+  .dashboard-grid {
+    gap: var(--space-3);
+  }
+
+  .chart-panel,
+  .signal-card,
+  .coverage-card {
+    border-radius: 0;
+    border-right: 0;
+    border-left: 0;
+  }
+
+  .chart-canvas {
+    height: max(54vh, 400px);
+  }
+}
