@@ -118,3 +118,44 @@ export function decimalEquals(left, right) {
   const rightDecimal = toDecimalOrNull(right);
   return leftDecimal !== null && rightDecimal !== null && leftDecimal.equals(rightDecimal);
 }
+
+/** Format an unsigned USD magnitude without turning a tiny non-zero value into $0.00. */
+export function formatUsdMagnitude(value, { nullText = EMPTY_DECIMAL_TEXT } = {}) {
+  const decimal = toDecimalOrNull(value);
+  if (decimal === null) return nullText;
+
+  const exact = decimal.abs();
+  const rounded = exact.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  if (!exact.isZero() && rounded.isZero()) return "<$0.01";
+  return `$${groupedFixed(rounded, 2, true)}`;
+}
+
+export function formatRatioMagnitudeAsPercent(value, { nullText = "N/A" } = {}) {
+  const decimal = toDecimalOrNull(value);
+  if (decimal === null) return nullText;
+  return `${groupedFixed(decimal.abs().times(100), 1, true)}%`;
+}
+
+export function describeMaeAdvantage(value) {
+  const decimal = toDecimalOrNull(value);
+  if (decimal === null) return "N/A";
+  if (decimal.isZero()) return "Same MAE as no change";
+  return `${formatUsdMagnitude(decimal)} ${decimal.isPositive() ? "closer" : "worse"}`;
+}
+
+export function describeSkillChange(value) {
+  const decimal = toDecimalOrNull(value);
+  if (decimal === null) return "N/A — no-change error was zero";
+  if (decimal.isZero()) return "Same error as no change";
+  return `${formatRatioMagnitudeAsPercent(decimal)} ${decimal.isPositive() ? "lower" : "higher"}`;
+}
+
+export const describeMaeChange = describeSkillChange;
+export const describeRmseChange = describeSkillChange;
+
+export function describeBias(value) {
+  const decimal = toDecimalOrNull(value);
+  if (decimal === null) return "N/A";
+  if (decimal.isZero()) return "No average signed bias";
+  return `${formatUsdMagnitude(decimal)} ${decimal.isPositive() ? "high" : "low"} on average`;
+}

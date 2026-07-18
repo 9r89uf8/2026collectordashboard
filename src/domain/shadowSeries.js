@@ -17,7 +17,7 @@ export const HISTORICAL_UNVERIFIED_LABEL =
   "Configured candidate — historical primary unverified";
 export const UNOBSERVED_BUCKET_REASON = "unobserved-retained-bucket";
 
-const SHA256_PATTERN = /^[a-fA-F0-9]{64}$/;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 function safeInteger(value) {
   return Number.isSafeInteger(value) ? value : null;
@@ -269,6 +269,16 @@ export function validateProjectionIdentity(evaluationValue, options = {}) {
   const selectionIdentity = responseIdentityResult.identity;
   const liveSignal = extractLiveSignal(settings.liveSignal ?? settings.livePayload);
   if (!liveSignal) {
+    const isCurrentMarket =
+      settings.isCurrentMarket ??
+      (typeof settings.mode === "string" ? settings.mode === "live" : false);
+    if (isCurrentMarket) {
+      return hiddenIdentity(
+        "live-selection-unverified",
+        "The active selection identity cannot be verified. Projections are hidden.",
+        { ...shared, selectionIdentity },
+      );
+    }
     return identityResult({
       projectionVisible: true,
       code: "historical-primary-unverified",
@@ -390,9 +400,11 @@ function normalizeAttempt(point, projectionVisible) {
   const projectedDecimal = projectionVisible && sourceHasProjection ? sourceProjectedDecimal : null;
   const baselineDecimal = projectionVisible && sourceHasProjection ? sourceBaselineDecimal : null;
   const scored = sourceHasProjection && actualDecimal !== null;
+  const persistedForecastError = scored
+    ? decimalStringOrNull(point.forecastErrorDecimal ?? point.forecast_error)
+    : null;
   const forecastErrorSource = scored
-    ? decimalStringOrNull(point.forecastErrorDecimal ?? point.forecast_error) ??
-      decimalDifferenceString(sourceProjectedDecimal, actualDecimal)
+    ? persistedForecastError ?? decimalDifferenceString(sourceProjectedDecimal, actualDecimal)
     : null;
   const baselineErrorSource =
     scored && sourceBaselineDecimal !== null
@@ -426,6 +438,10 @@ function normalizeAttempt(point, projectionVisible) {
     actualPlotValue: financialChartNumber(actualDecimal),
     baselinePlotValue: financialChartNumber(baselineDecimal),
     forecastErrorDecimal: projectionVisible ? forecastErrorSource : null,
+    persistedForecastErrorDecimal: projectionVisible ? persistedForecastError : null,
+    persistedForecastErrorPlotValue: financialChartNumber(
+      projectionVisible ? persistedForecastError : null,
+    ),
     absoluteErrorDecimal:
       projectionVisible && forecastErrorSource !== null
         ? absoluteDecimalString(forecastErrorSource)
@@ -463,13 +479,17 @@ function linePoint(point, seriesName) {
       ? "actualDecimal"
       : seriesName === "projected"
         ? "projectedDecimal"
-        : "baselineDecimal";
+        : seriesName === "baseline"
+          ? "baselineDecimal"
+          : "persistedForecastErrorDecimal";
   const plotField =
     seriesName === "actual"
       ? "actualPlotValue"
       : seriesName === "projected"
         ? "projectedPlotValue"
-        : "baselinePlotValue";
+        : seriesName === "baseline"
+          ? "baselinePlotValue"
+          : "persistedForecastErrorPlotValue";
   return Object.freeze({
     targetMs: point.targetMs,
     value: point[plotField],
@@ -527,6 +547,7 @@ function emptySeries(identity, market = null, stats = {}) {
     actual: [],
     projected: [],
     baseline: [],
+    error: [],
     points: [],
     separators: [],
     stats: {
@@ -551,6 +572,7 @@ function emptySeries(identity, market = null, stats = {}) {
     actual: result.actual,
     projected: result.projected,
     baseline: result.baseline,
+    error: result.error,
     contextualActual: [],
   };
   return result;
@@ -611,6 +633,7 @@ export function buildShadowSeries(evaluationValue, options = {}) {
   const actual = [];
   const projected = [];
   const baseline = [];
+  const error = [];
   const separators = [];
   let unobservedBuckets = 0;
 
@@ -623,11 +646,13 @@ export function buildShadowSeries(evaluationValue, options = {}) {
         actual.push(separatorPoint(separator, "actual"));
         projected.push(separatorPoint(separator, "projected"));
         baseline.push(separatorPoint(separator, "baseline"));
+        error.push(separatorPoint(separator, "error"));
       }
     }
     actual.push(linePoint(point, "actual"));
     projected.push(linePoint(point, "projected"));
     baseline.push(linePoint(point, "baseline"));
+    error.push(linePoint(point, "error"));
   });
 
   const stats = {
@@ -655,6 +680,7 @@ export function buildShadowSeries(evaluationValue, options = {}) {
     actual,
     projected,
     baseline,
+    error,
     points,
     separators,
     stats,
@@ -663,7 +689,7 @@ export function buildShadowSeries(evaluationValue, options = {}) {
     threshold,
     ghost: null,
   };
-  result.series = { actual, projected, baseline, contextualActual };
+  result.series = { actual, projected, baseline, error, contextualActual };
   result.ghost = options.livePayload
     ? deriveLiveGhost(options.livePayload, {
         market,

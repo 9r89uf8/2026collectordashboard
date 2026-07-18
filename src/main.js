@@ -2,6 +2,7 @@ import './styles/index.css'
 
 import { dashboardConfig } from './config.js'
 import { createCatchupChart } from './charts/catchupChart.js'
+import { createForecastErrorChart } from './charts/forecastErrorChart.js'
 import { LiveController } from './controllers/liveController.js'
 import { RecentController } from './controllers/recentController.js'
 import { normalizeMarketWindow } from './domain/marketWindow.js'
@@ -11,6 +12,7 @@ import {
   deriveLiveGhost,
   normalizeContextActualSeries,
 } from './domain/shadowSeries.js'
+import { buildForecastPerformanceModel } from './domain/forecastPerformance.js'
 import {
   createDashboardStore,
   createInitialDashboardState,
@@ -19,6 +21,7 @@ import {
 import { readDashboardRoute, writeDashboardRoute } from './state/routeState.js'
 import { mountAppShell } from './views/appShell.js'
 import { renderCoverageStrip } from './views/coverageStrip.js'
+import { renderForecastPerformance } from './views/forecastPerformanceCard.js'
 import { renderHeader } from './views/header.js'
 import { renderMarketControls } from './views/marketControls.js'
 import { renderPointsTable } from './views/pointsTable.js'
@@ -116,6 +119,7 @@ function fallbackShadowModel({ market, context, sources, live, mode }) {
     actual: [],
     projected: [],
     baseline: [],
+    error: [],
     points: [],
     separators: [],
     stats: {
@@ -128,7 +132,7 @@ function fallbackShadowModel({ market, context, sources, live, mode }) {
     projectionVisible: identity.projectionVisible,
     threshold: chooseOpeningThreshold(context, sources),
   }
-  result.series = { actual: [], projected: [], baseline: [], contextualActual }
+  result.series = { actual: [], projected: [], baseline: [], error: [], contextualActual }
   result.ghost = mode === 'live'
     ? deriveLiveGhost(live, {
         market,
@@ -201,9 +205,18 @@ function statusFor(state, chartData) {
   const shadow = chartData?.shadow
 
   if (shadow?.identity?.projectionVisible === false) {
+    const selectionMismatch = [
+      'current-selection-identity-mismatch',
+      'live-selection-unverified',
+      'live-selection-identity-invalid',
+    ].includes(shadow.identity.code)
     return {
       kind: 'error',
-      title: shadow.identity.code === 'selection-change' ? 'Selection changed within market' : 'Projection configuration mismatch',
+      title: shadow.identity.code === 'selection-change'
+        ? 'Selection changed during this market'
+        : selectionMismatch
+          ? 'Configured/live selection mismatch'
+          : 'Projection configuration mismatch',
       message: shadow.identity.banner || shadow.identity.reason,
     }
   }
@@ -270,6 +283,7 @@ class DashboardApplication {
       selectedMarketId: route.selectedMarketId,
     })
     this.chart = createCatchupChart(this.refs.chart)
+    this.errorChart = null
     this.liveController = new LiveController({
       modelVersion: dashboardConfig.primaryModelVersion,
       onEvent: (event) => this.handleControllerEvent(event),
@@ -466,6 +480,11 @@ class DashboardApplication {
         ? 'Open the private SSH tunnel to reconnect the dashboard API.'
         : 'The chart window will lock as soon as the API returns a market identity.'
       renderCoverageStrip(this.refs, null, { live: state.mode === 'live' })
+      renderForecastPerformance(this.refs, null, {
+        resource: state.resources.evaluations,
+      })
+      this.errorChart?.clear()
+      this.refs['error-strip'].hidden = true
       renderSignalCard(
         this.refs,
         state.mode === 'live'
@@ -529,6 +548,41 @@ class DashboardApplication {
     renderPointsTable(this.refs, createPointTableRows(shadow.points))
 
     const evaluations = state.resources.evaluations.data
+    const performanceModel = evaluations
+      ? buildForecastPerformanceModel(evaluations, {
+          requestedMarketId: market.marketId,
+          configuredModelVersion: dashboardConfig.primaryModelVersion,
+          identity: shadow.identity,
+        })
+      : null
+    renderForecastPerformance(this.refs, performanceModel, {
+      resource: state.resources.evaluations,
+    })
+
+    const errorSeries = shadow.error ?? shadow.series?.error ?? []
+    const scoredErrors = errorSeries.filter(
+      (point) => point?.plotValue !== null && Number.isFinite(point?.plotValue),
+    )
+    const errorStripVisible = Boolean(evaluations) && shadow.projectionVisible === true
+    this.refs['error-strip'].hidden = !errorStripVisible
+    this.refs['error-strip'].classList.toggle(
+      'dimmed',
+      errorStripVisible && state.resources.evaluations.status === 'error',
+    )
+    if (errorStripVisible) {
+      this.errorChart ??= createForecastErrorChart(this.refs['error-chart'])
+      this.errorChart.update(chartModel)
+      this.refs['error-empty'].hidden = scoredErrors.length > 0
+      this.refs['error-empty'].textContent = state.mode === 'live'
+        ? 'Waiting for causally scored forecast errors.'
+        : 'No causally scored forecast errors are retained for this market.'
+      this.refs['error-summary'].textContent = scoredErrors.length > 0
+        ? `${scoredErrors.length} signed forecast errors are plotted at their target times. Positive values are above actual and negative values are below actual.`
+        : 'No signed forecast errors are displayed.'
+    } else {
+      this.errorChart?.clear()
+    }
+
     const horizonMs = evaluations?.model?.horizon_ms ?? liveSignal(state.resources.live.data)?.horizon_ms ?? 3000
     const identity = shadow.identity.selectionIdentity || shadow.identity.liveIdentity
     this.refs['footer-model'].textContent = dashboardConfig.primaryModelVersion
@@ -541,6 +595,7 @@ class DashboardApplication {
     this.liveController.stop()
     this.recentController.stop()
     this.chart.dispose()
+    this.errorChart?.dispose()
     this.unsubscribe?.()
   }
 }

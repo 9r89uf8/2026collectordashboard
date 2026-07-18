@@ -70,6 +70,21 @@ export function mountAppShell(root) {
             </div>
           </div>
 
+          <section class="forecast-error-strip" data-ref="error-strip" aria-labelledby="forecast-error-title" hidden>
+            <div class="forecast-error-heading">
+              <div>
+                <p class="chart-kicker">Target-time residuals</p>
+                <h3 id="forecast-error-title">Signed forecast error</h3>
+              </div>
+              <p class="forecast-error-legend"><span class="error-key error-key--positive"></span>above actual <span class="error-key error-key--negative"></span>below actual</p>
+            </div>
+            <div class="forecast-error-stage">
+              <div class="forecast-error-chart" data-ref="error-chart" role="img" aria-label="Signed forecast error at each target time"></div>
+              <p class="forecast-error-empty" data-ref="error-empty">Waiting for causally scored forecast errors.</p>
+            </div>
+            <p class="sr-only" data-ref="error-summary">No signed forecast errors are displayed.</p>
+          </section>
+
           <p class="sr-only" data-ref="chart-summary" aria-live="polite">
             No market evidence is currently displayed.
           </p>
@@ -109,6 +124,19 @@ export function mountAppShell(root) {
               <span class="hero-metric-caption" data-ref="hero-caption">No current shadow projection</span>
             </div>
             <dl class="metric-list" data-ref="signal-metrics"></dl>
+          </section>
+
+          <section class="performance-card panel" data-ref="performance-card" aria-labelledby="performance-title" aria-busy="true">
+            <div class="card-header performance-header">
+              <div>
+                <p class="card-kicker">Paired forecast evidence</p>
+                <h2 class="card-title" id="performance-title" data-ref="performance-title">Forecast performance</h2>
+              </div>
+              <span class="performance-badge" data-ref="performance-badge" hidden>So far</span>
+            </div>
+            <p class="performance-subtitle" data-ref="performance-subtitle">Shadow / Experimental</p>
+            <div class="performance-body" data-ref="performance-body"></div>
+            <p class="sr-only" data-ref="performance-summary">Forecast performance is loading.</p>
           </section>
 
           <section class="coverage-card panel" aria-labelledby="coverage-title">

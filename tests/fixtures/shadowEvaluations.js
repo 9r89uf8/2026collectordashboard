@@ -101,6 +101,57 @@ export const COMPLETED_EVALUATIONS = Object.freeze({
   ],
 });
 
+export const PERFORMANCE_COHORT = Object.freeze({
+  selection_identity: {
+    fingerprint_sha256: FINGERPRINT,
+    artifact_sha256: ARTIFACT,
+  },
+  scored_points: 2,
+  forecast: {
+    mean_absolute_error_usd: "3.25",
+    median_absolute_error_usd: "3.25",
+    p95_absolute_error_usd: "3.25",
+    maximum_absolute_error_usd: "3.25",
+    root_mean_squared_error_usd: "4.20",
+    mean_signed_error_usd: "0.42",
+  },
+  no_change_baseline: {
+    mean_absolute_error_usd: "19.35",
+    root_mean_squared_error_usd: "20.10",
+  },
+  mean_absolute_advantage_usd: "16.10",
+  mae_skill_vs_no_change: "0.832041343669250646",
+  rmse_skill_vs_no_change: "0.791044776119402985",
+  paired_comparison: {
+    wins: 2,
+    ties: 0,
+    losses: 0,
+    win_rate: "1",
+    tie_rate: "0",
+    loss_rate: "0",
+  },
+});
+
+export const PERFORMANCE_EVALUATIONS = Object.freeze({
+  schema_version: 1,
+  server_time_ms: MARKET.market_end_ms + 5_000,
+  market: MARKET,
+  model: COMPLETED_EVALUATIONS.model,
+  coverage: {
+    window_buckets: 600,
+    market_window_elapsed: true,
+    observed_buckets: 3,
+    unobserved_buckets_as_of_response: 597,
+    attempts: 4,
+    valid_forecasts: 3,
+    scored: 2,
+    invalid: 1,
+    valid_without_actual: 1,
+  },
+  points: COMPLETED_EVALUATIONS.points.slice(0, 4),
+  performance: { cohorts: [PERFORMANCE_COHORT] },
+});
+
 export const LIVE_PAYLOAD = Object.freeze({
   server_time_ms: 1_003_050,
   ...MARKET,

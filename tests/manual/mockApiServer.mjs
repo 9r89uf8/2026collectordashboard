@@ -48,6 +48,74 @@ function contextPayload(selected) {
   }
 }
 
+function performanceFor(points) {
+  const scored = points.filter((point) => (
+    point.valid === true &&
+    point.actual_chainlink !== null &&
+    point.forecast_error !== null &&
+    point.baseline_error !== null
+  ))
+  if (scored.length === 0) return { cohorts: [] }
+
+  const forecastErrors = scored.map((point) => Number(point.forecast_error))
+  const baselineErrors = scored.map((point) => Number(point.baseline_error))
+  const absoluteForecastByPoint = forecastErrors.map(Math.abs)
+  const absoluteForecast = [...absoluteForecastByPoint].sort((left, right) => left - right)
+  const absoluteBaseline = baselineErrors.map(Math.abs)
+  const mean = (values) => values.reduce((total, value) => total + value, 0) / values.length
+  const rmse = (values) => Math.sqrt(mean(values.map((value) => value ** 2)))
+  const median = absoluteForecast.length % 2 === 0
+    ? (absoluteForecast[absoluteForecast.length / 2 - 1] + absoluteForecast[absoluteForecast.length / 2]) / 2
+    : absoluteForecast[Math.floor(absoluteForecast.length / 2)]
+  const p95 = absoluteForecast[Math.ceil(absoluteForecast.length * 0.95) - 1]
+  const forecastMae = mean(absoluteForecast)
+  const baselineMae = mean(absoluteBaseline)
+  const forecastRmse = rmse(forecastErrors)
+  const baselineRmse = rmse(baselineErrors)
+  let wins = 0
+  let ties = 0
+  let losses = 0
+  absoluteForecastByPoint.forEach((error, index) => {
+    if (error < absoluteBaseline[index]) wins += 1
+    else if (error > absoluteBaseline[index]) losses += 1
+    else ties += 1
+  })
+  const decimal = (value) => value.toFixed(8)
+
+  return {
+    cohorts: [{
+      selection_identity: {
+        fingerprint_sha256: fingerprint,
+        artifact_sha256: artifact,
+      },
+      scored_points: scored.length,
+      forecast: {
+        mean_absolute_error_usd: decimal(forecastMae),
+        median_absolute_error_usd: decimal(median),
+        p95_absolute_error_usd: decimal(p95),
+        maximum_absolute_error_usd: decimal(absoluteForecast.at(-1)),
+        root_mean_squared_error_usd: decimal(forecastRmse),
+        mean_signed_error_usd: decimal(mean(forecastErrors)),
+      },
+      no_change_baseline: {
+        mean_absolute_error_usd: decimal(baselineMae),
+        root_mean_squared_error_usd: decimal(baselineRmse),
+      },
+      mean_absolute_advantage_usd: decimal(baselineMae - forecastMae),
+      mae_skill_vs_no_change: baselineMae === 0 ? null : decimal((baselineMae - forecastMae) / baselineMae),
+      rmse_skill_vs_no_change: baselineRmse === 0 ? null : decimal((baselineRmse - forecastRmse) / baselineRmse),
+      paired_comparison: {
+        wins,
+        ties,
+        losses,
+        win_rate: decimal(wins / scored.length),
+        tie_rate: decimal(ties / scored.length),
+        loss_rate: decimal(losses / scored.length),
+      },
+    }],
+  }
+}
+
 function evaluationPayload(selected, live = false) {
   const pointLimit = live ? 280 : 600
   const points = []
@@ -119,6 +187,7 @@ function evaluationPayload(selected, live = false) {
       valid_without_actual: validWithoutActual,
     },
     points,
+    performance: performanceFor(points),
   }
 }
 
