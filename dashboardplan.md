@@ -80,12 +80,14 @@ The current backend already provides:
 | Current one-second market context | `GET /markets/current/data` | PostgreSQL |
 | Observed source opening values | `GET /markets/{market_id}/sources` | PostgreSQL |
 | Current source opening values | `GET /markets/current/sources` | PostgreSQL |
-| Current actual price and latest projection | `GET /markets/current/live` | Redis |
+| Current actual prices and latest projection | `GET /markets/current/live` | Redis |
 | Current matured forecast history | `GET /markets/current/shadow-evaluations?model_version=...` | PostgreSQL |
 | One market's matured forecast history | `GET /markets/{market_id}/shadow-evaluations?model_version=...` | PostgreSQL |
 
-The live endpoint supplies only the latest short-lived shadow projection. It
-cannot reconstruct a completed market after a page refresh.
+The live endpoint supplies only the latest prices and short-lived shadow
+projection. It cannot reconstruct a completed market after a page refresh;
+historical comparison lines come from PostgreSQL-backed context and evaluation
+routes.
 
 PostgreSQL already stores the required paired forecast and outcome evidence in
 `shadow_signal_evaluations`. The base table remains deliberately revoked from
@@ -99,6 +101,7 @@ PostgreSQL-backed routes:
 ```http
 GET /markets/current/shadow-evaluations?model_version=catchup_ratio_l3000_b100
 GET /markets/{market_id}/shadow-evaluations?model_version=catchup_ratio_l3000_b100
+GET /markets/{market_id}/shadow-evaluations/download?model_version=catchup_ratio_l3000_b100
 ```
 
 Their complete deployed contract is documented in [`FRONTEND_API.md`](FRONTEND_API.md).
@@ -106,6 +109,17 @@ Their complete deployed contract is documented in [`FRONTEND_API.md`](FRONTEND_A
 The accepted query values are `catchup_ratio_l3000_b100`,
 `catchup_ratio_l3500_b100`, and `catchup_ratio_l4000_b100`. The dashboard still
 requests only the configured frozen primary.
+
+The download route returns the same schema-v2 report as a JSON attachment. It
+is deliberately ID-addressed: the frontend builds its proxy-relative URL with
+`shadowEvaluationsDownloadUrl(marketId, modelVersion)`, producing
+`/api/markets/{market_id}/shadow-evaluations/download?model_version=...`.
+There is no `/current` download action in the dashboard. The response filename
+contract is:
+
+```text
+btc_5m_market_{market_id}_shadow_evaluations_{model_version}.json
+```
 
 Do not merge the 500 ms evaluation rows into `/markets/{market_id}/data`; that
 route has a different one-second grid. Keep the reporting contract separate.
@@ -158,8 +172,11 @@ not resume projection rendering until the configuration is corrected.
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "server_time_ms": 1783989305000,
+  "evaluation_semantics": {
+    "scored_input_max_future_skew_ms": 0
+  },
   "market": {
     "market_id": 5946630,
     "market_start_ms": 1783989000000,
@@ -206,6 +223,11 @@ not resume projection rendering until the configuration is corrected.
       "forecast_market_id": 5946630,
       "full_horizon_before_forecast_market_end": true,
       "chainlink_at_forecast": "64080.47",
+      "chainlink_at_forecast_source_timestamp_ms": 1783989000300,
+      "chainlink_at_forecast_received_ms": 1783989000450,
+      "futures_at_forecast": "64092.84",
+      "futures_at_forecast_source_timestamp_ms": 1783989000380,
+      "futures_at_forecast_received_ms": 1783989000480,
       "projected_chainlink": "64103.07",
       "actual_chainlink": "64099.82",
       "actual_chainlink_source_timestamp_ms": 1783989003000,
@@ -255,8 +277,18 @@ is `window_buckets - observed_buckets`. It is deliberately an as-of-response
 observation, not a finality claim. Absence can mean a skipped observation,
 restart, queue drop, rejected write, database delay, or retention.
 
-Detailed futures inputs and `created_at` are not needed in the first dashboard
-contract.
+Schema v2 persists the exact forecast-generation observations used by the
+model. A valid row has complete value/source/received triples for
+`chainlink_at_forecast` and `futures_at_forecast`; an unavailable observation
+and both of its timestamps are `null` together on an invalid row. A paired
+`actual_chainlink` likewise has both timestamps, while an unpaired actual and
+its timestamps are all `null`.
+
+`evaluation_semantics.scored_input_max_future_skew_ms` must be exactly `0`.
+The frontend fails the reporting resource closed if that guarantee is absent
+or changes. The received timestamp for each forecast input must be no later
+than `generated_ms`, and the received timestamp for a paired actual must be no
+later than `target_ms`.
 
 ### Temporal query rule
 
@@ -306,10 +338,10 @@ Desktop/laptop layout:
 
 ```text
 ┌ Oracle Catch-Up ─ SHADOW / EXPERIMENTAL ─ API ● ─ UTC time ┐
-│ [ Live ] [ Recent ]   [‹] 21:00–21:05 UTC [›]  [Refresh]   │
+│ [ Live ] [ Recent ] [‹] 21:00–21:05 UTC [›] [Refresh] [Download JSON] │
 ├───────────────────────────────────────────────┬─────────────┤
 │                                               │ Signal      │
-│ Actual vs Projected Chainlink                 │ summary     │
+│ Projection, actual, and forecast-time futures │ summary     │
 │ Fixed five-minute chart                       │             │
 │                                               │ Coverage    │
 │                                               │ summary     │
@@ -331,6 +363,8 @@ Show:
 - the selected market's exact UTC start and end;
 - previous and next market buttons based on discovered IDs;
 - a refresh button in Recent mode;
+- a `Download JSON` link in Recent mode only when the selected market is
+  finished;
 - API/tunnel status; and
 - a UTC clock or market countdown derived from API `server_time_ms`.
 
@@ -383,7 +417,7 @@ baseline is dotted, and the live ghost uses a hollow marker.
 - Keep the market end as a boundary; a target exactly at `market_end_ms`
   belongs to the next market.
 - Use a tight price y-axis with visible padding.
-- Do not smooth either price series.
+- Do not smooth any price series.
 - Do not connect across `null` values.
 
 ### Series
@@ -391,6 +425,7 @@ baseline is dotted, and the live ghost uses a hollow marker.
 | Series | Value | X coordinate | Style |
 | --- | --- | --- | --- |
 | Paired actual Chainlink | `actual_chainlink` | `target_ms` | Solid cyan, no persistent markers |
+| Futures input at forecast generation | `futures_at_forecast` | `target_ms` | Dotted fuchsia, no persistent markers |
 | Projected Chainlink | `projected_chainlink` | `target_ms` | Dashed amber, no persistent markers |
 | No-change baseline | `chainlink_at_forecast` | `target_ms` | Faint dotted gray, hidden by default |
 | Current live projection | `projected_chainlink` from `/live` | `generated_ms + horizon_ms` | Hollow amber ghost marker |
@@ -404,7 +439,8 @@ between observations cannot be reconstructed. This paired value is the correct
 actual for matching the stored score; raw replay remains the event-complete
 authority.
 
-Use `showSymbol: false` for the paired actual, projected, and baseline series.
+Use `showSymbol: false` for the paired actual, target-aligned futures,
+projected, and baseline series.
 Expose exact points through the axis crosshair and tooltip, and reserve the
 hollow persistent marker for the live ghost. This keeps roughly 600 points per
 series legible on a laptop.
@@ -413,6 +449,21 @@ series legible on a laptop.
 Chainlink line, especially when no evaluation rows are retained. Do not use
 that rounded source-second series to recalculate forecast accuracy; use the
 paired evaluation actual and stored error.
+
+The target-aligned futures line is persisted forecast input, not a target-time
+actual. For every valid evaluation, plot `futures_at_forecast` at that row's
+`target_ms`; its `futures_at_forecast_source_timestamp_ms` and
+`futures_at_forecast_received_ms` describe the observation available when the
+forecast was generated. Shifting the input to `target_ms` puts the input,
+projection, and eventual Chainlink outcome on the same comparison coordinate,
+but it does not change the input's generation-time meaning. Label the line and
+tooltip as `Futures input at forecast`, never `Actual futures`.
+
+Read this series only from the PostgreSQL-backed shadow-evaluation response.
+Do not maintain a browser futures buffer or substitute top-level `/live`
+`futures.last`, signal-level `futures_now`, or one-second `/data` futures. A
+null `futures_at_forecast` is an explicit gap. Because the value is persisted,
+both Live and Recent modes can reconstruct the series after a page reload.
 
 Request this contextual route with its default `fill_display=false`. Carrying a
 prior Chainlink value forward would conceal genuine observation gaps.
@@ -514,7 +565,7 @@ Default polling:
 | Request | Interval |
 | --- | --- |
 | `/markets/current/live` | 1 second |
-| ID-addressed shadow evaluations | 2 seconds |
+| ID-addressed shadow evaluations | 1 second |
 | ID-addressed `/data` and `/sources` | 5 seconds |
 | Market discovery | 30 seconds |
 
@@ -557,6 +608,10 @@ than the evaluator's `actual_chainlink @ target_ms` semantics. The chart's
 newest actual comes from matured pairs or the separately labeled one-second
 context line. A future live-actual overlay needs its own series contract and is
 out of scope here.
+
+The target-aligned futures-input line does not change that rule. It is a
+separate, explicitly labeled series copied from each evaluation's persisted
+`futures_at_forecast`, not from a fresh `/live` price.
 
 ### Live ghost
 
@@ -621,6 +676,14 @@ For the selected market, fetch the data, sources, and evaluation
 endpoint in parallel. Completed markets are static and should be fetched once
 unless the user presses Refresh.
 
+Expose `Download JSON` only in Recent mode after the selected evaluation
+response confirms `coverage.market_window_elapsed === true`. Set its `href` to
+`shadowEvaluationsDownloadUrl(selectedMarketId, configuredModelVersion)` and
+let the browser follow the attachment response; do not fetch and reserialize
+the report in client code. The link must remain tied to the selected numeric
+market ID and must never use a moving `/current` route. Live mode does not show
+this control.
+
 The default Recent list contains completed markets only. If the active market
 is offered as a convenience later, put it in a separately labeled `Live now`
 group rather than presenting it as a completed review.
@@ -638,8 +701,10 @@ Do not show a generic “accuracy percentage.” Later, add forecast MAE,
 no-change baseline MAE, and skill only after their calculation and presentation
 are specified and tested consistently with the backend.
 
-Evaluation retention is currently 168 hours. If a known market has no retained
-points, show:
+Evaluation retention is currently seven days (168 hours) in PostgreSQL. The
+JSON download is available only while those evaluation rows are retained; it
+is a bounded research export, not permanent archival. If a known market has no
+retained points, disable or omit the download and show:
 
 ```text
 No projection history retained for this market. Actual Chainlink data is still
@@ -665,6 +730,7 @@ that came from another healthy request.
 | Live Chainlink receive/source age exceeds 2,500/5,000 ms | Mark the side-card value `Stale` and dim it |
 | Paired actual observation missing | Leave an actual gap; do not interpolate or fabricate it |
 | Historical `points: []` | Show retention/no-evidence message and actual-only context |
+| Recent download fails or has aged out | Keep the rendered market unchanged and report that the retained export is unavailable |
 | Evaluation route fails while `/live` works | Preserve the live side card and ghost; show `Projection history unavailable` |
 | `/live` fails while evaluations work | Preserve the last paired chart, remove/dim the ghost, and show `Live feed unavailable` |
 | `/data` fails while evaluations work | Keep the paired actual/projected chart; mark one-second context unavailable |
@@ -866,8 +932,10 @@ function financialChartNumber(value) {
   targetMs: point.target_ms,
   projectedDecimal: point.projected_chainlink,
   actualDecimal: point.actual_chainlink,
+  futuresInputDecimal: point.futures_at_forecast,
   projectedPlotValue: financialChartNumber(point.projected_chainlink),
   actualPlotValue: financialChartNumber(point.actual_chainlink),
+  futuresInputPlotValue: financialChartNumber(point.futures_at_forecast),
 }
 ```
 
@@ -913,6 +981,16 @@ Block release unless tests prove:
 
 - projection uses `target_ms`, never `generated_ms`;
 - actual and projected comparison points share the same x-coordinate;
+- persisted `futures_at_forecast` uses the same `target_ms` x-coordinate while
+  retaining its forecast-generation label and timestamps;
+- the chart never substitutes `/live` `futures.last` or signal-level
+  `futures_now` for the persisted futures input;
+- null futures inputs and missing evaluation buckets are explicit gaps;
+- schema v1, missing/nonzero
+  `evaluation_semantics.scored_input_max_future_skew_ms`, incomplete
+  observation triples, and post-cutoff received timestamps fail validation;
+- the download helper validates its inputs and returns only the proxy-prefixed,
+  ID-addressed URL with an encoded `model_version` query;
 - target-time half-open market boundaries are correct;
 - a forecast generated in the preceding market can enter the selected target
   window;
@@ -925,22 +1003,25 @@ Block release unless tests prove:
 - decimal calculations use `decimal.js`;
 - `null` or invalid live signals remove the ghost;
 - the ghost is deduplicated when its matured record appears;
-- polls never overlap and are aborted on mode changes; and
+- polls never overlap and are aborted on mode changes;
 - rollover replaces the fixed five-minute window cleanly without mixing
   ID-addressed context from the preceding market;
 - model, selection fingerprint, or artifact-hash mismatches fail closed to
-  actual-only context;
-  and
+  actual-only context; and
 - stale and missing live Chainlink states remain distinct from API failure.
 
 Use committed fixtures for:
 
 - a completed market with scored points;
 - a live market with one future ghost;
+- persisted forecast-time futures values deliberately distinct from projected
+  and actual Chainlink values;
 - invalid attempts;
 - missing causal actuals;
 - target-time boundary crossings;
-- an empty retained-evaluation response; and
+- an empty retained-evaluation response;
+- a schema-v2 download attachment with the contracted filename
+  `btc_5m_market_{market_id}_shadow_evaluations_{model_version}.json`; and
 - tunnel/API failure and recovery.
 
 ### Build checks
@@ -983,11 +1064,15 @@ Phase one is complete when:
 - a user can choose Live or a discovered recent market;
 - the chart always spans exactly one five-minute target window;
 - actual and projected Chainlink are aligned at `target_ms`;
+- persisted forecast-time futures inputs are aligned at `target_ms`, clearly
+  distinguished from target-time actuals, with null inputs left as gaps;
 - invalid attempts and missing observations remain visible gaps;
 - a live forecast appears as an unconnected ghost and later becomes a matured
   point;
 - a page refresh can reconstruct a recent market from PostgreSQL-backed API
   data;
+- a finished Recent market can download its retained schema-v2 JSON report by
+  exact market ID, with the seven-day PostgreSQL limit visible;
 - the configured model is never dynamically reranked, and it is called the
   frozen primary only when its selection identity can be verified;
 - all financial calculations use decimal strings and `decimal.js`;

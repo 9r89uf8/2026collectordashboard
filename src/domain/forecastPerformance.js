@@ -44,6 +44,44 @@ function requiredDecimal(value) {
   return typeof value === 'string' && toDecimalOrNull(value) !== null
 }
 
+function validateObservationTriple(
+  point,
+  {
+    label,
+    valueField,
+    sourceTimestampField,
+    receivedTimestampField,
+    required,
+    noLaterThanMs,
+  },
+) {
+  const value = point[valueField]
+  const sourceTimestampMs = point[sourceTimestampField]
+  const receivedTimestampMs = point[receivedTimestampField]
+
+  if (value === null) {
+    if (sourceTimestampMs !== null || receivedTimestampMs !== null) {
+      return invalid('invalid-report', `${label} timestamps must be null when its value is null.`)
+    }
+    if (required) {
+      return invalid('invalid-report', `A valid evaluation is missing its ${label} observation.`)
+    }
+    return Object.freeze({ ok: true })
+  }
+
+  if (
+    !requiredDecimal(value) ||
+    !nonNegativeInteger(sourceTimestampMs) ||
+    !nonNegativeInteger(receivedTimestampMs)
+  ) {
+    return invalid('invalid-report', `${label} value or timestamps are malformed.`)
+  }
+  if (receivedTimestampMs > noLaterThanMs) {
+    return invalid('invalid-report', `${label} was received after its causal cutoff.`)
+  }
+  return Object.freeze({ ok: true })
+}
+
 function strictIdentity(value) {
   if (!value || typeof value !== 'object') return null
   const source = value.selection_identity ?? value.selectionIdentity ?? value
@@ -141,12 +179,6 @@ function validatePoints(points, coverage, market, modelHorizonMs) {
     if (!nonNegativeInteger(point.matured_ms)) {
       return invalid('invalid-report', 'An evaluation attempt has an invalid maturity timestamp.')
     }
-    for (const field of ['actual_chainlink_source_timestamp_ms', 'actual_chainlink_received_ms']) {
-      if (point[field] !== null && point[field] !== undefined && !nonNegativeInteger(point[field])) {
-        return invalid('invalid-report', `Evaluation timestamp ${field} is malformed.`)
-      }
-    }
-
     const tuple = pointSortTuple(point)
     if (previousTuple && !tupleAfterOrEqual(tuple, previousTuple)) {
       return invalid('invalid-report', 'Evaluation attempts are not in target-time order.')
@@ -157,6 +189,7 @@ function validatePoints(points, coverage, market, modelHorizonMs) {
       'projected_chainlink',
       'actual_chainlink',
       'chainlink_at_forecast',
+      'futures_at_forecast',
       'forecast_error',
       'baseline_error',
     ]) {
@@ -168,6 +201,36 @@ function validatePoints(points, coverage, market, modelHorizonMs) {
       return invalid('invalid-report', 'An evaluation attempt has a malformed selection identity.')
     }
     identityKeys.add(performanceIdentityKey(point))
+
+    const chainlinkInputResult = validateObservationTriple(point, {
+      label: 'forecast-time Chainlink',
+      valueField: 'chainlink_at_forecast',
+      sourceTimestampField: 'chainlink_at_forecast_source_timestamp_ms',
+      receivedTimestampField: 'chainlink_at_forecast_received_ms',
+      required: point.valid === true,
+      noLaterThanMs: generatedMs,
+    })
+    if (!chainlinkInputResult.ok) return chainlinkInputResult
+
+    const futuresInputResult = validateObservationTriple(point, {
+      label: 'forecast-time futures',
+      valueField: 'futures_at_forecast',
+      sourceTimestampField: 'futures_at_forecast_source_timestamp_ms',
+      receivedTimestampField: 'futures_at_forecast_received_ms',
+      required: point.valid === true,
+      noLaterThanMs: generatedMs,
+    })
+    if (!futuresInputResult.ok) return futuresInputResult
+
+    const actualResult = validateObservationTriple(point, {
+      label: 'target-time Chainlink',
+      valueField: 'actual_chainlink',
+      sourceTimestampField: 'actual_chainlink_source_timestamp_ms',
+      receivedTimestampField: 'actual_chainlink_received_ms',
+      required: false,
+      noLaterThanMs: targetMs,
+    })
+    if (!actualResult.ok) return actualResult
 
     if (point.valid === true) {
       if (!requiredDecimal(point.projected_chainlink) || !requiredDecimal(point.chainlink_at_forecast)) {
@@ -302,11 +365,21 @@ export function validateForecastPerformanceReport(
   if (!response || typeof response !== 'object') {
     return invalid('invalid-report', 'Evaluation reporting response is not an object.')
   }
-  if (response.schema_version !== 1) {
+  if (response.schema_version !== 2) {
     return invalid('invalid-report', 'Unsupported evaluation schema version.')
   }
   if (!nonNegativeInteger(response.server_time_ms)) {
     return invalid('invalid-report', 'Evaluation report timestamp is malformed.')
+  }
+  if (
+    !response.evaluation_semantics ||
+    typeof response.evaluation_semantics !== 'object' ||
+    response.evaluation_semantics.scored_input_max_future_skew_ms !== 0
+  ) {
+    return invalid(
+      'invalid-report',
+      'Evaluation reporting does not guarantee zero future skew for scored inputs.',
+    )
   }
 
   const market = normalizeMarketWindow(response.market)
@@ -390,6 +463,7 @@ export function validateForecastPerformanceReport(
       coverage: response.coverage,
       points: response.points,
       cohorts: Object.freeze(cohorts),
+      evaluationSemantics: response.evaluation_semantics,
       serverTimeMs: response.server_time_ms,
       active: response.coverage.market_window_elapsed === false,
     }),

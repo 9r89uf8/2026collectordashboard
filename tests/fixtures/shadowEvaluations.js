@@ -29,6 +29,11 @@ function attempt(overrides = {}) {
     forecast_market_id: generatedMs < MARKET.market_start_ms ? 41 : 42,
     full_horizon_before_forecast_market_end: true,
     chainlink_at_forecast: "64080.47",
+    chainlink_at_forecast_source_timestamp_ms: generatedMs - 120,
+    chainlink_at_forecast_received_ms: generatedMs - 45,
+    futures_at_forecast: "64137.91",
+    futures_at_forecast_source_timestamp_ms: generatedMs - 85,
+    futures_at_forecast_received_ms: generatedMs - 15,
     projected_chainlink: "64103.07",
     actual_chainlink: "64099.82",
     actual_chainlink_source_timestamp_ms: overrides.target_ms ?? generatedMs + 3_000,
@@ -44,8 +49,11 @@ function attempt(overrides = {}) {
 }
 
 export const COMPLETED_EVALUATIONS = Object.freeze({
-  schema_version: 1,
+  schema_version: 2,
   server_time_ms: MARKET.market_end_ms + 5_000,
+  evaluation_semantics: {
+    scored_input_max_future_skew_ms: 0,
+  },
   market: MARKET,
   model: {
     model_version: MODEL_VERSION,
@@ -73,7 +81,11 @@ export const COMPLETED_EVALUATIONS = Object.freeze({
   points: [
     // Generated in market 41, but its target belongs to selected market 42.
     attempt({ generated_ms: 997_000 }),
-    attempt({ generated_ms: 997_500, projected_chainlink: "64104.00" }),
+    attempt({
+      generated_ms: 997_500,
+      projected_chainlink: "64104.00",
+      futures_at_forecast: "64138.44",
+    }),
     attempt({
       generated_ms: 998_000,
       valid: false,
@@ -81,7 +93,15 @@ export const COMPLETED_EVALUATIONS = Object.freeze({
       invalid_reasons: ["chainlink_stale"],
       projected_chainlink: null,
       chainlink_at_forecast: null,
+      chainlink_at_forecast_source_timestamp_ms: null,
+      chainlink_at_forecast_received_ms: null,
+      futures_at_forecast: null,
+      futures_at_forecast_source_timestamp_ms: null,
+      futures_at_forecast_received_ms: null,
       actual_chainlink: null,
+      actual_chainlink_source_timestamp_ms: null,
+      actual_chainlink_received_ms: null,
+      actual_chainlink_age_at_target_ms: null,
       pending_move: null,
       pending_move_bps: null,
       direction: null,
@@ -92,12 +112,20 @@ export const COMPLETED_EVALUATIONS = Object.freeze({
     attempt({
       generated_ms: 999_000,
       projected_chainlink: "64106.00",
+      futures_at_forecast: "64140.60",
       actual_chainlink: null,
+      actual_chainlink_source_timestamp_ms: null,
+      actual_chainlink_received_ms: null,
+      actual_chainlink_age_at_target_ms: null,
       forecast_error: null,
       baseline_error: null,
     }),
     // A target at the half-open end belongs to the next market.
-    attempt({ generated_ms: 1_297_000, target_ms: MARKET.market_end_ms }),
+    attempt({
+      generated_ms: 1_297_000,
+      target_ms: MARKET.market_end_ms,
+      futures_at_forecast: "64212.75",
+    }),
   ],
 });
 
@@ -133,8 +161,9 @@ export const PERFORMANCE_COHORT = Object.freeze({
 });
 
 export const PERFORMANCE_EVALUATIONS = Object.freeze({
-  schema_version: 1,
+  schema_version: 2,
   server_time_ms: MARKET.market_end_ms + 5_000,
+  evaluation_semantics: COMPLETED_EVALUATIONS.evaluation_semantics,
   market: MARKET,
   model: COMPLETED_EVALUATIONS.model,
   coverage: {
@@ -160,6 +189,16 @@ export const LIVE_PAYLOAD = Object.freeze({
       value: "64100.01",
       received_age_ms: 75,
       source_age_ms: 180,
+    },
+  },
+  futures: {
+    last: {
+      value: "64112.50",
+      source_timestamp_ms: 1_003_020,
+      time_ms: 1_003_020,
+      received_ms: 1_003_035,
+      source_age_ms: 30,
+      received_age_ms: 15,
     },
   },
   signals: {

@@ -18,6 +18,7 @@
 
   --actual: #42c7e8;
   --actual-soft: rgba(66, 199, 232, 0.13);
+  --futures: #e879f9;
   --projected: #f4b860;
   --projected-soft: rgba(244, 184, 96, 0.13);
   --baseline: #8793a3;
@@ -62,4 +63,3 @@
     --muted: #aeb9c5;
   }
 }
-

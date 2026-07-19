@@ -53,6 +53,7 @@ export function createPoller(taskOrOptions, suppliedOptions = {}) {
   const runImmediately = options.immediate ?? true;
   const onError = options.onError;
   const externalSignal = options.signal;
+  const nowFn = options.nowFn ?? Date.now;
   const setTimeoutFn = options.setTimeoutFn ?? globalThis.setTimeout;
   const clearTimeoutFn = options.clearTimeoutFn ?? globalThis.clearTimeout;
 
@@ -69,6 +70,9 @@ export function createPoller(taskOrOptions, suppliedOptions = {}) {
   }
   if (typeof setTimeoutFn !== "function" || typeof clearTimeoutFn !== "function") {
     throw new TypeError("timer functions are required");
+  }
+  if (typeof nowFn !== "function") {
+    throw new TypeError("nowFn must be a function");
   }
 
   let state = "idle";
@@ -120,6 +124,7 @@ export function createPoller(taskOrOptions, suppliedOptions = {}) {
 
     const controller = new AbortController();
     requestController = controller;
+    const startedAtMs = nowFn();
     let nextDelay = intervalMs;
 
     const operation = (async () => {
@@ -131,6 +136,8 @@ export function createPoller(taskOrOptions, suppliedOptions = {}) {
 
         if (!controller.signal.aborted) {
           consecutiveFailures = 0;
+          const elapsedMs = Math.max(0, nowFn() - startedAtMs);
+          nextDelay = Math.max(0, intervalMs - elapsedMs);
         }
       } catch (error) {
         if (!controller.signal.aborted) {
@@ -307,7 +314,9 @@ export function createPoller(taskOrOptions, suppliedOptions = {}) {
  *
  * `onVisibleRefresh(signal)` is awaited while every child remains paused. It
  * is the hook for the required immediate anchored `/current/live` refresh;
- * normal child cadences resume only after that hook settles.
+ * normal child cadences resume only after that hook settles. The optional
+ * `onPollersResumed` hook runs after child state becomes active, so callers can
+ * request managed per-poller refreshes without racing the paused state.
  */
 export function createPollingGroup(
   pollersOrOptions = [],
@@ -319,6 +328,7 @@ export function createPollingGroup(
   const pollers = options.pollers ?? [];
   const documentRef = options.documentRef ?? globalThis.document;
   const onVisibleRefresh = options.onVisibleRefresh;
+  const onPollersResumed = options.onPollersResumed;
   const onError = options.onError;
 
   if (!Array.isArray(pollers)) {
@@ -330,10 +340,17 @@ export function createPollingGroup(
   ) {
     throw new TypeError("onVisibleRefresh must be a function");
   }
+  if (
+    onPollersResumed !== undefined &&
+    typeof onPollersResumed !== "function"
+  ) {
+    throw new TypeError("onPollersResumed must be a function");
+  }
 
   let state = "idle";
   let transitionId = 0;
   let refreshController = null;
+  let visibleRefreshPromise = null;
   let listening = false;
 
   function listen() {
@@ -369,6 +386,9 @@ export function createPollingGroup(
     const ownTransition = ++transitionId;
     state = "resuming";
     await Promise.all(pollers.map((poller) => poller.whenIdle()));
+    if (visibleRefreshPromise) {
+      await visibleRefreshPromise;
+    }
 
     if (state === "stopped" || ownTransition !== transitionId) {
       return false;
@@ -378,16 +398,30 @@ export function createPollingGroup(
     if (immediate && onVisibleRefresh) {
       const controller = new AbortController();
       refreshController = controller;
-      try {
-        await onVisibleRefresh(controller.signal);
-        anchored = !controller.signal.aborted;
-      } catch (error) {
-        if (!controller.signal.aborted && onError) {
-          await onError(error);
+      const operation = (async () => {
+        try {
+          await onVisibleRefresh(controller.signal);
+          return !controller.signal.aborted;
+        } catch (error) {
+          if (!controller.signal.aborted && onError) {
+            try {
+              await onError(error);
+            } catch {
+              // A visibility observer must not prevent polling from resuming.
+            }
+          }
+          return false;
         }
+      })();
+      visibleRefreshPromise = operation;
+      try {
+        anchored = await operation;
       } finally {
         if (refreshController === controller) {
           refreshController = null;
+        }
+        if (visibleRefreshPromise === operation) {
+          visibleRefreshPromise = null;
         }
       }
     }
@@ -405,6 +439,7 @@ export function createPollingGroup(
         poller.resume({ immediate: childImmediate });
       }
     });
+    onPollersResumed?.({ immediate, anchored });
     return true;
   }
 

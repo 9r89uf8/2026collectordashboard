@@ -29,7 +29,15 @@ export function formatMarketWindow(market) {
 
 export function renderMarketControls(
   refs,
-  { mode = 'live', market, marketIndex = -1, marketCount = 0, busy = false } = {},
+  {
+    mode = 'live',
+    market,
+    marketIndex = -1,
+    marketCount = 0,
+    busy = false,
+    downloadUrl = null,
+    completed = false,
+  } = {},
 ) {
   refs.modeButtons.forEach((button) => {
     const active = button.dataset.mode === mode
@@ -50,6 +58,20 @@ export function renderMarketControls(
   refs.refreshButton.hidden = mode !== 'recent'
   refs.refreshButton.disabled = busy
   refs.refreshButton.classList.toggle('is-spinning', busy)
+
+  const recent = mode === 'recent'
+  const normalizedDownloadUrl =
+    typeof downloadUrl === 'string' ? downloadUrl.trim() : ''
+  const downloadAvailable =
+    recent && completed === true && normalizedDownloadUrl !== ''
+  refs.downloadButton.hidden = !recent
+  if (downloadAvailable) {
+    refs.downloadButton.setAttribute('href', normalizedDownloadUrl)
+    refs.downloadButton.removeAttribute('aria-disabled')
+  } else {
+    refs.downloadButton.removeAttribute('href')
+    refs.downloadButton.setAttribute('aria-disabled', 'true')
+  }
 }
 
 export { formatUtc }

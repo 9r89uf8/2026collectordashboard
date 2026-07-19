@@ -4,6 +4,7 @@ import {
   decimalEquals,
   decimalStringOrNull,
   financialChartNumber,
+  toDecimalOrNull,
 } from "./decimalFormat.js";
 import {
   evaluationTargetMs,
@@ -26,6 +27,41 @@ function safeInteger(value) {
 function positiveInteger(value) {
   const integer = safeInteger(value);
   return integer !== null && integer > 0 ? integer : null;
+}
+
+function nonNegativeInteger(value) {
+  const integer = safeInteger(value);
+  return integer !== null && integer >= 0 ? integer : null;
+}
+
+function normalizeForecastFutures(point, generatedMs) {
+  const rawDecimal =
+    point.futuresAtForecastDecimal ??
+    point.futuresAtForecast ??
+    point.futures_at_forecast;
+  const parsed = toDecimalOrNull(rawDecimal);
+  const rawSourceTimestamp =
+    point.futuresAtForecastSourceTimestampMs ??
+    point.futures_at_forecast_source_timestamp_ms;
+  const rawReceivedTimestamp =
+    point.futuresAtForecastReceivedMs ??
+    point.futures_at_forecast_received_ms;
+  const sourceTimestampMs = nonNegativeInteger(rawSourceTimestamp);
+  const receivedMs = nonNegativeInteger(rawReceivedTimestamp);
+  const valid =
+    parsed !== null &&
+    parsed.greaterThan(0) &&
+    sourceTimestampMs !== null &&
+    receivedMs !== null &&
+    receivedMs <= generatedMs;
+
+  const decimal = valid ? decimalStringOrNull(rawDecimal) : null;
+  return Object.freeze({
+    decimal,
+    plotValue: financialChartNumber(decimal),
+    sourceTimestampMs: decimal === null ? null : sourceTimestampMs,
+    receivedMs: decimal === null ? null : receivedMs,
+  });
 }
 
 function asResponse(value) {
@@ -411,6 +447,7 @@ function normalizeAttempt(point, projectionVisible) {
       ? decimalStringOrNull(point.baselineErrorDecimal ?? point.baseline_error) ??
         decimalDifferenceString(sourceBaselineDecimal, actualDecimal)
       : null;
+  const forecastFutures = normalizeForecastFutures(point, generatedMs);
 
   return Object.freeze({
     kind: "attempt",
@@ -434,9 +471,13 @@ function normalizeAttempt(point, projectionVisible) {
     projectedDecimal,
     actualDecimal,
     baselineDecimal,
+    futuresAtForecastDecimal: forecastFutures.decimal,
     projectedPlotValue: financialChartNumber(projectedDecimal),
     actualPlotValue: financialChartNumber(actualDecimal),
     baselinePlotValue: financialChartNumber(baselineDecimal),
+    futuresAtForecastPlotValue: forecastFutures.plotValue,
+    futuresAtForecastSourceTimestampMs: forecastFutures.sourceTimestampMs,
+    futuresAtForecastReceivedMs: forecastFutures.receivedMs,
     forecastErrorDecimal: projectionVisible ? forecastErrorSource : null,
     persistedForecastErrorDecimal: projectionVisible ? persistedForecastError : null,
     persistedForecastErrorPlotValue: financialChartNumber(
@@ -477,6 +518,8 @@ function linePoint(point, seriesName) {
   const decimalField =
     seriesName === "actual"
       ? "actualDecimal"
+      : seriesName === "futures"
+        ? "futuresAtForecastDecimal"
       : seriesName === "projected"
         ? "projectedDecimal"
         : seriesName === "baseline"
@@ -485,12 +528,14 @@ function linePoint(point, seriesName) {
   const plotField =
     seriesName === "actual"
       ? "actualPlotValue"
+      : seriesName === "futures"
+        ? "futuresAtForecastPlotValue"
       : seriesName === "projected"
         ? "projectedPlotValue"
         : seriesName === "baseline"
           ? "baselinePlotValue"
           : "persistedForecastErrorPlotValue";
-  return Object.freeze({
+  const result = {
     targetMs: point.targetMs,
     value: point[plotField],
     plotValue: point[plotField],
@@ -498,7 +543,15 @@ function linePoint(point, seriesName) {
     [decimalField]: point[decimalField],
     separator: false,
     point,
-  });
+  };
+  if (seriesName === "futures") {
+    result.futuresDecimal = point.futuresAtForecastDecimal;
+    result.futuresAtForecastSourceTimestampMs =
+      point.futuresAtForecastSourceTimestampMs;
+    result.futuresAtForecastReceivedMs = point.futuresAtForecastReceivedMs;
+    result.missing = point.futuresAtForecastPlotValue === null;
+  }
+  return Object.freeze(result);
 }
 
 function separatorPoint(separator, seriesName) {
@@ -545,6 +598,7 @@ function emptySeries(identity, market = null, stats = {}) {
   const result = {
     market,
     actual: [],
+    futures: [],
     projected: [],
     baseline: [],
     error: [],
@@ -561,6 +615,8 @@ function emptySeries(identity, market = null, stats = {}) {
       unobservedSeparators: 0,
       unobservedBuckets: 0,
       projectionSuppressed: !identity.projectionVisible,
+      futuresMatched: 0,
+      futuresMissing: 0,
       ...stats,
     },
     projectionVisible: identity.projectionVisible,
@@ -570,6 +626,7 @@ function emptySeries(identity, market = null, stats = {}) {
   };
   result.series = {
     actual: result.actual,
+    futures: result.futures,
     projected: result.projected,
     baseline: result.baseline,
     error: result.error,
@@ -631,6 +688,7 @@ export function buildShadowSeries(evaluationValue, options = {}) {
   );
 
   const actual = [];
+  const futures = [];
   const projected = [];
   const baseline = [];
   const error = [];
@@ -644,12 +702,14 @@ export function buildShadowSeries(evaluationValue, options = {}) {
         separators.push(separator);
         unobservedBuckets += separator.missingBucketCount;
         actual.push(separatorPoint(separator, "actual"));
+        futures.push(separatorPoint(separator, "futures"));
         projected.push(separatorPoint(separator, "projected"));
         baseline.push(separatorPoint(separator, "baseline"));
         error.push(separatorPoint(separator, "error"));
       }
     }
     actual.push(linePoint(point, "actual"));
+    futures.push(linePoint(point, "futures"));
     projected.push(linePoint(point, "projected"));
     baseline.push(linePoint(point, "baseline"));
     error.push(linePoint(point, "error"));
@@ -669,6 +729,8 @@ export function buildShadowSeries(evaluationValue, options = {}) {
     unobservedBuckets,
     cadenceValid: cadenceMs !== null,
     projectionSuppressed: !identity.projectionVisible,
+    futuresMatched: futures.filter((point) => !point.separator && !point.missing).length,
+    futuresMissing: futures.filter((point) => !point.separator && point.missing).length,
   };
 
   const contextualActual = options.contextualData
@@ -678,6 +740,7 @@ export function buildShadowSeries(evaluationValue, options = {}) {
   const result = {
     market,
     actual,
+    futures,
     projected,
     baseline,
     error,
@@ -689,7 +752,7 @@ export function buildShadowSeries(evaluationValue, options = {}) {
     threshold,
     ghost: null,
   };
-  result.series = { actual, projected, baseline, error, contextualActual };
+  result.series = { actual, futures, projected, baseline, error, contextualActual };
   result.ghost = options.livePayload
     ? deriveLiveGhost(options.livePayload, {
         market,

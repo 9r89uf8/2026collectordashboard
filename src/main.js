@@ -1,5 +1,6 @@
 import './styles/index.css'
 
+import { shadowEvaluationsDownloadUrl } from './api/shadowEvaluations.js'
 import { dashboardConfig } from './config.js'
 import { createCatchupChart } from './charts/catchupChart.js'
 import { createForecastErrorChart } from './charts/forecastErrorChart.js'
@@ -117,6 +118,7 @@ function fallbackShadowModel({ market, context, sources, live, mode }) {
   const result = {
     market,
     actual: [],
+    futures: [],
     projected: [],
     baseline: [],
     error: [],
@@ -127,12 +129,14 @@ function fallbackShadowModel({ market, context, sources, live, mode }) {
       scored: 0,
       invalid: 0,
       validWithoutActual: 0,
+      futuresMatched: 0,
+      futuresMissing: 0,
     },
     identity,
     projectionVisible: identity.projectionVisible,
     threshold: chooseOpeningThreshold(context, sources),
   }
-  result.series = { actual: [], projected: [], baseline: [], error: [], contextualActual }
+  result.series = { actual: [], futures: [], projected: [], baseline: [], error: [], contextualActual }
   result.ghost = mode === 'live'
     ? deriveLiveGhost(live, {
         market,
@@ -176,7 +180,6 @@ function chartDataFromState(state) {
       liveGhost: shadow.ghost,
       threshold: shadow.threshold,
       projectionVisible: shadow.projectionVisible,
-      ariaDescription: `Oracle Catch-Up ${state.mode} market ${market.marketId ?? 'unknown'} with ${shadow.stats.scored} paired scored forecast points.`,
     },
   }
 }
@@ -237,7 +240,7 @@ function statusFor(state, chartData) {
     return {
       kind: 'warning',
       title: 'Live feed unavailable',
-      message: 'Retained paired evidence remains visible; the live actual and future ghost are not fresh.',
+      message: 'Retained evaluations, including forecast-time futures inputs, remain visible; the live signal and future ghost are not fresh.',
     }
   }
 
@@ -362,6 +365,13 @@ class DashboardApplication {
     if (event.source !== state.mode) return
 
     if (event.type === 'resource') {
+      if (
+        (event.name === 'live' || event.name === 'evaluations') &&
+        event.status === 'loading' &&
+        state.resources[event.name].data !== null
+      ) {
+        return
+      }
       const now = Date.now()
       this.store.setState((current) => {
         const previous = current.resources[event.name] || createResource()
@@ -460,14 +470,32 @@ class DashboardApplication {
     const data = chartDataFromState(state)
     const marketIndex = state.markets.findIndex((market) => market.marketId === state.selectedMarketId)
     const busy = Object.values(state.resources).some((resource) => resource.status === 'loading')
+    const chartTitle = 'Actual vs projected Chainlink and forecast futures'
+    const selectedMarket = data?.market || state.market
+    const selectedMarketId = selectedMarket?.marketId ?? selectedMarket?.market_id
+    const evaluationReport = state.resources.evaluations.data
+    const evaluationMarket = normalizeMarketWindow(evaluationReport?.market)
+    const completed =
+      state.mode === 'recent' &&
+      Number.isSafeInteger(selectedMarketId) &&
+      selectedMarketId >= 0 &&
+      evaluationMarket?.marketId === selectedMarketId &&
+      evaluationReport?.coverage?.market_window_elapsed === true
+    const downloadUrl = completed
+      ? shadowEvaluationsDownloadUrl(selectedMarketId, dashboardConfig.primaryModelVersion)
+      : null
 
     this.renderClock()
+    this.refs['chart-title'].textContent = chartTitle
+    this.refs.chart.setAttribute('aria-label', `${chartTitle} chart`)
     renderMarketControls(this.refs, {
       mode: state.mode,
       market: data?.market || state.market,
       marketIndex,
       marketCount: state.markets.length,
       busy,
+      completed,
+      downloadUrl,
     })
     renderStatusBanner(this.refs, statusFor(state, data))
 
@@ -502,10 +530,13 @@ class DashboardApplication {
 
     const { shadow, chartModel, market } = data
     const contextualActual = shadow.series?.contextualActual || []
+    const futures = shadow.futures || []
+    const contextualActualVisibleByDefault = (shadow.points || []).length === 0
     const hasEvidence =
       hasLineValue(shadow.actual) ||
+      hasLineValue(futures) ||
       hasLineValue(shadow.projected) ||
-      hasLineValue(contextualActual) ||
+      (contextualActualVisibleByDefault && hasLineValue(contextualActual)) ||
       Boolean(shadow.ghost)
     const chartBusy =
       !hasEvidence &&
@@ -524,7 +555,17 @@ class DashboardApplication {
       : 'This market has no paired evaluations or one-second actual context to plot.'
 
     this.refs['chart-meta'].textContent = `Market ${market.marketId ?? '—'} · ${shadow.stats.scored} scored · fixed 05:00`
-    this.refs['chart-summary'].textContent = `Market ${market.marketId ?? 'unknown'} contains ${shadow.stats.attempts} retained attempts, ${shadow.stats.scored} scored forecast points, and ${shadow.stats.invalid} invalid attempts. ${shadow.projectionVisible ? 'Actual and projected series are visible when retained.' : 'Projection rendering is suppressed because identity validation failed.'}`
+    const futuresAvailable = futures.filter(
+      (point) => point?.separator !== true && Number.isFinite(point?.plotValue),
+    ).length
+    const futuresMissing = futures.filter(
+      (point) => point?.separator !== true && !Number.isFinite(point?.plotValue),
+    ).length
+    const futuresSummary = ` ${futuresAvailable} forecast rows include a persisted futures input and ${futuresMissing} render a futures gap.`
+    const visibleSeriesSummary = shadow.projectionVisible
+      ? 'Actual Chainlink, projected Chainlink, and persisted futures-at-forecast inputs are visible when retained.'
+      : 'Projection rendering is suppressed because identity validation failed; actual Chainlink and persisted futures-at-forecast inputs remain visible.'
+    this.refs['chart-summary'].textContent = `Market ${market.marketId ?? 'unknown'} contains ${shadow.stats.attempts} retained attempts, ${shadow.stats.scored} scored forecast points, and ${shadow.stats.invalid} invalid attempts.${futuresSummary} ${visibleSeriesSummary}`
 
     const signalView = state.mode === 'live'
       ? createLiveSignalViewModel({

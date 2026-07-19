@@ -44,9 +44,19 @@ export function mountAppShell(root) {
           </button>
         </div>
 
-        <button class="refresh-button" type="button" data-action="refresh" hidden>
-          <span aria-hidden="true">&#8635;</span>Refresh
-        </button>
+        <div class="market-actions">
+          <button class="refresh-button" type="button" data-action="refresh" hidden>
+            <span aria-hidden="true">&#8635;</span>Refresh
+          </button>
+          <a
+            class="download-button"
+            data-action="download"
+            aria-label="Download finished-market schema-v2 JSON report (7-day retention)"
+            title="Download finished-market schema-v2 JSON report; 7-day retention"
+            aria-disabled="true"
+            hidden
+          >Download JSON</a>
+        </div>
       </nav>
 
       <div class="status-region" data-ref="status-region" aria-live="polite" aria-atomic="true"></div>
@@ -56,13 +66,13 @@ export function mountAppShell(root) {
           <div class="panel-heading chart-heading">
             <div>
               <p class="chart-kicker">Target-time comparison</p>
-              <h2 class="chart-title" id="chart-title">Actual vs projected Chainlink</h2>
+              <h2 class="chart-title" id="chart-title" data-ref="chart-title">Actual vs projected Chainlink and forecast futures</h2>
             </div>
             <p class="chart-meta mono" data-ref="chart-meta">Fixed 05:00 UTC window</p>
           </div>
 
           <div class="chart-stage" data-ref="chart-stage" aria-busy="true">
-            <div class="chart-canvas" data-ref="chart" role="img" aria-label="Chainlink actual and projected price chart"></div>
+            <div class="chart-canvas" data-ref="chart" role="img" aria-label="Actual vs projected Chainlink and forecast futures chart"></div>
             <div class="chart-empty-state" data-ref="chart-empty">
               <div class="empty-state-orbit" aria-hidden="true"></div>
               <strong data-ref="empty-title">Waiting for market evidence</strong>
@@ -181,6 +191,7 @@ export function mountAppShell(root) {
   refs.previousButton = root.querySelector('[data-action="previous"]')
   refs.nextButton = root.querySelector('[data-action="next"]')
   refs.refreshButton = root.querySelector('[data-action="refresh"]')
+  refs.downloadButton = root.querySelector('[data-action="download"]')
 
   return refs
 }

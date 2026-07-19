@@ -1,10 +1,19 @@
-import { requestJson } from "./client.js";
+import { apiUrl, requestJson } from "./client.js";
 
 function marketSegment(marketId) {
-  const normalized =
-    typeof marketId === "number" ? String(marketId) : marketId?.trim();
+  const normalized = typeof marketId === "number"
+    ? Number.isSafeInteger(marketId) && marketId >= 0
+      ? String(marketId)
+      : null
+    : typeof marketId === "string"
+      ? marketId.trim()
+      : null;
 
-  if (!normalized || !/^\d+$/.test(normalized)) {
+  if (
+    !normalized ||
+    !/^\d+$/.test(normalized) ||
+    !Number.isSafeInteger(Number(normalized))
+  ) {
     throw new TypeError("marketId must be a non-negative integer");
   }
 
@@ -64,6 +73,18 @@ export function fetchCurrentShadowEvaluations(
     ...options,
     live: true,
   });
+}
+
+/**
+ * Build the same-origin URL for downloading one market's persisted report.
+ * Downloads are deliberately ID-addressed; callers must not substitute the
+ * moving `/current` route.
+ */
+export function shadowEvaluationsDownloadUrl(marketId, modelVersion) {
+  const query = modelQuery(modelVersion);
+  return apiUrl(
+    `/markets/${marketSegment(marketId)}/shadow-evaluations/download?${query}`,
+  );
 }
 
 export const getShadowEvaluations = fetchShadowEvaluations;

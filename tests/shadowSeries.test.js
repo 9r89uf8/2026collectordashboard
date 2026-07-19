@@ -37,6 +37,130 @@ describe("buildShadowSeries", () => {
     expect(firstActual.decimal).toBe("64099.82");
   });
 
+  it("uses persisted forecast-time futures at target_ms and ignores a conflicting live map", () => {
+    const evaluations = {
+      ...COMPLETED_EVALUATIONS,
+      points: COMPLETED_EVALUATIONS.points.map((point, index) =>
+        index === 0
+          ? {
+              ...point,
+              futures_at_forecast: "64121.3000",
+              // Provider event clocks are metadata, not the causal receipt
+              // boundary, so a source timestamp after generation is retained.
+              futures_at_forecast_source_timestamp_ms: point.generated_ms + 100,
+              futures_at_forecast_received_ms: point.generated_ms - 50,
+            }
+          : index === 1
+            ? {
+                ...point,
+                futures_at_forecast: "not-a-decimal",
+                futures_at_forecast_source_timestamp_ms: point.generated_ms - 100,
+                futures_at_forecast_received_ms: point.generated_ms - 50,
+              }
+            : {
+                ...point,
+                futures_at_forecast: null,
+                futures_at_forecast_source_timestamp_ms: null,
+                futures_at_forecast_received_ms: null,
+              },
+      ),
+    };
+    const result = buildShadowSeries(evaluations, {
+      ...configured,
+      futuresByTargetMs: {
+        "1000000": {
+          decimal: "99999.0000",
+          receivedMs: 1_000_000,
+          sourceTimestampMs: 999_990,
+        },
+      },
+    });
+    const first = result.futures.find((point) => point.targetMs === 1_000_000);
+    const malformed = result.futures.find((point) => point.targetMs === 1_000_500);
+    const normalized = result.points.find((point) => point.targetMs === 1_000_000);
+
+    expect(first).toMatchObject({
+      targetMs: 1_000_000,
+      futuresAtForecastDecimal: "64121.3000",
+      futuresAtForecastSourceTimestampMs: 997_100,
+      futuresAtForecastReceivedMs: 996_950,
+      plotValue: 64_121.3,
+      missing: false,
+    });
+    expect(normalized).toMatchObject({
+      futuresAtForecastDecimal: "64121.3000",
+      futuresAtForecastSourceTimestampMs: 997_100,
+      futuresAtForecastReceivedMs: 996_950,
+    });
+    expect(first.decimal).not.toBe("99999.0000");
+    expect(malformed).toMatchObject({ plotValue: null, missing: true });
+    expect(result.futures.filter((point) => point.separator)).toHaveLength(1);
+    expect(result.stats).toMatchObject({ futuresMatched: 1, futuresMissing: 3 });
+  });
+
+  it("renders gaps for incomplete, malformed, or future-received persisted futures", () => {
+    const generatedMs = COMPLETED_EVALUATIONS.points[0].generated_ms;
+    const invalidObservations = [
+      {
+        futures_at_forecast: null,
+        futures_at_forecast_source_timestamp_ms: null,
+        futures_at_forecast_received_ms: null,
+      },
+      {
+        futures_at_forecast: "64121.30",
+        futures_at_forecast_source_timestamp_ms: null,
+        futures_at_forecast_received_ms: generatedMs - 25,
+      },
+      {
+        futures_at_forecast: "64121.30",
+        futures_at_forecast_source_timestamp_ms: -1,
+        futures_at_forecast_received_ms: generatedMs - 25,
+      },
+      {
+        futures_at_forecast: "64121.30",
+        futures_at_forecast_source_timestamp_ms: generatedMs - 50,
+        futures_at_forecast_received_ms: null,
+      },
+      {
+        futures_at_forecast: "64121.30",
+        futures_at_forecast_source_timestamp_ms: generatedMs - 50,
+        futures_at_forecast_received_ms: generatedMs + 1,
+      },
+      {
+        futures_at_forecast: "0",
+        futures_at_forecast_source_timestamp_ms: generatedMs - 50,
+        futures_at_forecast_received_ms: generatedMs - 25,
+      },
+    ];
+
+    for (const observation of invalidObservations) {
+      const evaluations = {
+        ...COMPLETED_EVALUATIONS,
+        points: COMPLETED_EVALUATIONS.points.map((point, index) => ({
+          ...point,
+          ...(index === 0
+            ? observation
+            : {
+                futures_at_forecast: null,
+                futures_at_forecast_source_timestamp_ms: null,
+                futures_at_forecast_received_ms: null,
+              }),
+        })),
+      };
+
+      const result = buildShadowSeries(evaluations, configured);
+      const first = result.futures.find((point) => point.targetMs === 1_000_000);
+
+      expect(first).toMatchObject({
+        decimal: null,
+        plotValue: null,
+        missing: true,
+        futuresAtForecastSourceTimestampMs: null,
+        futuresAtForecastReceivedMs: null,
+      });
+    }
+  });
+
   it("keeps a boundary-crossing target and excludes target == market_end_ms", () => {
     const result = buildShadowSeries(COMPLETED_EVALUATIONS, configured);
     expect(result.points[0].generatedMs).toBeLessThan(MARKET.market_start_ms);

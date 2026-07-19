@@ -41,13 +41,18 @@ whether the dashboard is in Live or Recent mode.
 
 ## 2. API Call
 
-There is no separate performance endpoint. Both existing evaluation routes
-return the points, coverage, and `performance.cohorts` in one response:
+There is no separate performance-calculation endpoint. Both evaluation report
+routes return the points, coverage, and `performance.cohorts` in one response;
+the ID-addressed download route returns that schema-v2 report as an attachment:
 
 ```http
 GET /markets/current/shadow-evaluations?model_version=catchup_ratio_l3000_b100
 GET /markets/{market_id}/shadow-evaluations?model_version=catchup_ratio_l3000_b100
+GET /markets/{market_id}/shadow-evaluations/download?model_version=catchup_ratio_l3000_b100
 ```
+
+The attachment filename is
+`btc_5m_market_{market_id}_shadow_evaluations_{model_version}.json`.
 
 The configured primary is currently:
 
@@ -71,7 +76,7 @@ Keep the dashboard's existing market-anchored refresh sequence:
 2. Read its returned `market_id`.
 3. Fetch
    `/api/markets/{market_id}/shadow-evaluations?model_version=...`.
-4. Poll that exact ID-addressed evaluation route every two seconds while the
+4. Poll that exact ID-addressed evaluation route every second while the
    market remains active.
 
 This prevents a five-minute rollover from mixing the live signal, chart, and
@@ -93,12 +98,26 @@ post-close grace period for delayed persistence.
 Do not issue another request to calculate performance. Do not recalculate the
 aggregate metrics from chart coordinates.
 
+Show `Download JSON` only after the selected Recent report confirms
+`coverage.market_window_elapsed === true`. Its URL comes from
+`shadowEvaluationsDownloadUrl(selectedMarketId, configuredModelVersion)` and
+must be the proxy-prefixed, ID-addressed
+`/api/markets/{market_id}/shadow-evaluations/download?model_version=...` path.
+Let the browser handle the attachment instead of fetching and reserializing
+it. Never expose a `/current` download action in Live mode.
+
+PostgreSQL retains shadow evaluations for seven days (168 hours). The export is
+available only within that window and is not permanent archival; omit or
+disable the download when the selected report has no retained points.
+
 ### Browser helper
 
 This example is compatible with the existing vanilla-JavaScript dashboard and
 same-origin proxy:
 
 ```javascript
+import { shadowEvaluationsDownloadUrl } from "./api/shadowEvaluations.js";
+
 const SUPPORTED_MODELS = new Set([
   "catchup_ratio_l3000_b100",
   "catchup_ratio_l3500_b100",
@@ -182,9 +201,26 @@ renderForecastPerformance({
 });
 ```
 
-`schema_version` remains `1` because `performance` was additive. During
-rollout, an absent `performance` field means the dashboard reached an older
-backend. Show `API update required`; do not treat it as an empty market.
+`schema_version` is `2`. Schema v2 adds the persisted forecast-input
+observation triples and the root `evaluation_semantics` guarantee; schema v1
+must fail validation instead of being interpreted as equivalent evidence.
+During rollout, an absent `performance` field means the dashboard reached an
+older or incomplete backend. Show `API update required`; do not treat it as an
+empty market.
+
+The same evaluation points supply the chart's futures-input line. Plot
+`point.futures_at_forecast` at `point.target_ms` beside the projection and
+paired Chainlink actual. This is the futures observation persisted when the
+forecast was generated, not a futures actual observed at the target; label it
+`Futures input at forecast`. Read its provenance from
+`futures_at_forecast_source_timestamp_ms` and
+`futures_at_forecast_received_ms`.
+
+Do not poll `/markets/current/live` at high frequency or build a browser-side
+futures buffer for this line. Do not substitute top-level `futures.last`,
+signal-level `futures_now`, or one-second context data. The PostgreSQL-backed
+evaluation route reconstructs the persisted input in both Live and Recent
+modes, including after a reload; a null input remains a chart gap.
 
 ## 3. Response Fields Used by the Panel
 
@@ -513,7 +549,8 @@ state. It is response time, not the timestamp of the newest evaluation.
 Treat the endpoint as untrusted input at the browser boundary. Validate before
 rendering at least these invariants:
 
-- `schema_version === 1`;
+- `schema_version === 2`;
+- `evaluation_semantics.scored_input_max_future_skew_ms === 0`;
 - returned market ID equals the requested ID;
 - returned model version equals the configured model;
 - `performance.cohorts` exists and is an array;
@@ -524,6 +561,12 @@ rendering at least these invariants:
   target belongs to the returned market window;
 - points are sorted by target time, generation time, then horizon;
 - financial metrics are finite decimal strings or `null`;
+- valid points have complete value/source/received triples for
+  `chainlink_at_forecast` and `futures_at_forecast`;
+- null observations have null source and received timestamps, while present
+  observations have non-negative safe-integer timestamps;
+- forecast-input `received_ms` values are no later than `generated_ms`, and a
+  paired actual's `received_ms` is no later than `target_ms`;
 - `points.length === coverage.attempts` and is at most 1,000;
 - `valid_forecasts + invalid === attempts`;
 - `scored + valid_without_actual === valid_forecasts`;
@@ -548,6 +591,11 @@ The frontend checkpoint is complete when tests demonstrate:
 - the configured model version is sent on every evaluation request;
 - Live mode anchors the evaluation request to the `/live` market ID;
 - completed markets use the ID-addressed route without continuous polling;
+- the download helper rejects malformed market/model inputs and produces only
+  the proxy-prefixed, ID-addressed URL with an encoded model query;
+- `Download JSON` is limited to finished Recent markets and the attachment uses
+  the contracted `btc_5m_market_{market_id}_shadow_evaluations_{model_version}.json`
+  filename within the seven-day retention window;
 - Decimal strings never pass through binary floating-point calculations for
   labels or comparisons;
 - positive, zero, negative, and null advantage/skill states have correct copy;
@@ -563,6 +611,11 @@ The frontend checkpoint is complete when tests demonstrate:
 - multiple cohorts never produce an aggregate score or silently select the
   first cohort;
 - paired counts and cohort scored totals are validated;
+- schema v1, missing/nonzero future-skew semantics, incomplete observation
+  triples, and post-cutoff received timestamps fail closed;
+- the futures-input chart series comes only from persisted
+  `futures_at_forecast`, remains labeled as generation-time input, and uses
+  `target_ms` without claiming to be a target-time futures actual;
 - a `$13` signed-error spike is plotted at `target_ms`;
 - invalid and unscored points produce gaps rather than zeros or carry-forward;
   and

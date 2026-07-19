@@ -80,12 +80,88 @@ describe('validateForecastPerformanceReport', () => {
     const result = validateForecastPerformanceReport(PERFORMANCE_EVALUATIONS, validationOptions)
     expect(result.ok).toBe(true)
     expect(result.value).toMatchObject({ active: false })
+    expect(result.value.evaluationSemantics).toEqual({
+      scored_input_max_future_skew_ms: 0,
+    })
+    expect(result.value.points[0]).toMatchObject({
+      chainlink_at_forecast: '64080.47',
+      futures_at_forecast: '64137.91',
+    })
     expect(result.value.cohorts[0]).toMatchObject({
       scoredPoints: 2,
       selectionIdentity: {
         fingerprint_sha256: FINGERPRINT,
         artifact_sha256: ARTIFACT,
       },
+    })
+  })
+
+  it('requires schema v2 and an explicit zero-future-skew scoring guarantee', () => {
+    const schemaOne = structuredClone(PERFORMANCE_EVALUATIONS)
+    schemaOne.schema_version = 1
+    expect(validateForecastPerformanceReport(schemaOne, validationOptions)).toMatchObject({
+      ok: false,
+      code: 'invalid-report',
+    })
+
+    const missingSemantics = structuredClone(PERFORMANCE_EVALUATIONS)
+    delete missingSemantics.evaluation_semantics
+    expect(validateForecastPerformanceReport(missingSemantics, validationOptions)).toMatchObject({
+      ok: false,
+      code: 'invalid-report',
+    })
+
+    const futureSkewAllowed = structuredClone(PERFORMANCE_EVALUATIONS)
+    futureSkewAllowed.evaluation_semantics.scored_input_max_future_skew_ms = 1
+    expect(validateForecastPerformanceReport(futureSkewAllowed, validationOptions)).toMatchObject({
+      ok: false,
+      code: 'invalid-report',
+    })
+  })
+
+  it.each([
+    [
+      'a valid row with no persisted futures input',
+      (point) => {
+        point.futures_at_forecast = null
+        point.futures_at_forecast_source_timestamp_ms = null
+        point.futures_at_forecast_received_ms = null
+      },
+    ],
+    [
+      'an incomplete forecast-time Chainlink timestamp pair',
+      (point) => { point.chainlink_at_forecast_source_timestamp_ms = null },
+    ],
+    [
+      'an incomplete forecast-time futures timestamp pair',
+      (point) => { point.futures_at_forecast_received_ms = null },
+    ],
+    [
+      'a futures input received after forecast generation',
+      (point) => { point.futures_at_forecast_received_ms = point.generated_ms + 1 },
+    ],
+    [
+      'a Chainlink input received after forecast generation',
+      (point) => { point.chainlink_at_forecast_received_ms = point.generated_ms + 1 },
+    ],
+    [
+      'a target actual received after its target',
+      (point) => { point.actual_chainlink_received_ms = point.target_ms + 1 },
+    ],
+    [
+      'timestamps attached to a null target actual',
+      (point) => {
+        point.actual_chainlink = null
+        point.actual_chainlink_source_timestamp_ms = point.target_ms
+        point.actual_chainlink_received_ms = point.target_ms
+      },
+    ],
+  ])('rejects %s', (_description, mutatePoint) => {
+    const response = structuredClone(PERFORMANCE_EVALUATIONS)
+    mutatePoint(response.points[0])
+    expect(validateForecastPerformanceReport(response, validationOptions)).toMatchObject({
+      ok: false,
+      code: 'invalid-report',
     })
   })
 

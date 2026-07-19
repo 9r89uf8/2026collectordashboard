@@ -17,6 +17,9 @@ const scoredPoint = Object.freeze({
   modelVersion: "catchup_ratio_l3000_b100",
   projectedDecimal: "64103.0700",
   actualDecimal: "64099.8200",
+  futuresAtForecastDecimal: "64110.5000",
+  futuresAtForecastSourceTimestampMs: MARKET_START_MS + 420,
+  futuresAtForecastReceivedMs: MARKET_START_MS + 475,
   baselineDecimal: "64080.4700",
   forecastErrorDecimal: "3.2500",
   baselineErrorDecimal: "-19.3500",
@@ -32,6 +35,9 @@ const invalidPoint = Object.freeze({
   modelVersion: "catchup_ratio_l3000_b100",
   projectedDecimal: null,
   actualDecimal: "64100.0000",
+  futuresAtForecastDecimal: null,
+  futuresAtForecastSourceTimestampMs: null,
+  futuresAtForecastReceivedMs: null,
   baselineDecimal: null,
   valid: false,
   status: "invalid",
@@ -40,8 +46,13 @@ const invalidPoint = Object.freeze({
 
 function linePoint(point, decimalField, plotValue) {
   return {
+    mode: "live",
     targetMs: point.targetMs,
     decimal: point[decimalField],
+    [decimalField]: point[decimalField],
+    futuresAtForecastSourceTimestampMs:
+      point.futuresAtForecastSourceTimestampMs,
+    futuresAtForecastReceivedMs: point.futuresAtForecastReceivedMs,
     plotValue,
     value: plotValue,
   };
@@ -69,6 +80,11 @@ function chartModel(overrides = {}) {
         separator,
         // The chart layer also enforces the half-open target boundary.
         { targetMs: MARKET_END_MS, decimal: "99999", plotValue: 99_999, value: 99_999 },
+      ],
+      futures: [
+        linePoint(scoredPoint, "futuresAtForecastDecimal", 64_110.5),
+        linePoint(invalidPoint, "futuresAtForecastDecimal", null),
+        separator,
       ],
       projected: [
         linePoint(scoredPoint, "projectedDecimal", 64_103.07),
@@ -104,6 +120,16 @@ function chartModel(overrides = {}) {
       },
       series: { contextualActual: [] },
     },
+    // This legacy browser-derived input must never override persisted
+    // futures-at-forecast evidence from shadowSeries.
+    futuresAtTargets: [
+      {
+        targetMs: scoredPoint.targetMs,
+        futuresDecimal: "99999.0000",
+        plotValue: 99_999,
+        value: 99_999,
+      },
+    ],
     ...overrides,
   };
 }
@@ -133,9 +159,10 @@ describe("createCatchupChartOptions", () => {
     const options = createCatchupChartOptions(chartModel());
     const projected = options.series.find((series) => series.name.includes(IDENTITY_LABEL));
     const actual = namedSeries(options, CHART_SERIES_NAMES.actual);
+    const futures = namedSeries(options, CHART_SERIES_NAMES.futures);
     const baseline = namedSeries(options, CHART_SERIES_NAMES.baseline);
 
-    for (const series of [actual, projected, baseline]) {
+    for (const series of [actual, futures, projected, baseline]) {
       expect(series).toMatchObject({
         type: "line",
         showSymbol: false,
@@ -145,21 +172,34 @@ describe("createCatchupChartOptions", () => {
     }
     expect(projected.data[0].value[0]).toBe(scoredPoint.targetMs);
     expect(projected.data[0].value[0]).not.toBe(scoredPoint.generatedMs);
+    expect(futures.data[0].value[0]).toBe(scoredPoint.targetMs);
     expect(projected.data.filter((datum) => datum.value[1] === null)).toHaveLength(2);
+    expect(futures.data.filter((datum) => datum.value[1] === null)).toHaveLength(2);
   });
 
   it("formats tooltip evidence from the retained decimal strings", () => {
     const options = createCatchupChartOptions(chartModel());
     const projected = options.series.find((series) => series.name.includes(IDENTITY_LABEL));
     const actual = namedSeries(options, CHART_SERIES_NAMES.actual);
+    const futures = namedSeries(options, CHART_SERIES_NAMES.futures);
     const tooltip = options.tooltip.formatter([
       { data: projected.data[0] },
       { data: actual.data[0] },
+      { data: futures.data[0] },
     ]);
 
     expect(tooltip).toContain("21:00:03.507 UTC");
     expect(tooltip).toContain("$64,103.07");
     expect(tooltip).toContain("$64,099.82");
+    expect(tooltip).toContain("Futures at forecast");
+    expect(tooltip).toContain("$64,110.50");
+    expect(tooltip).toContain("Forecast generated");
+    expect(tooltip).toContain("21:00:00.507 UTC");
+    expect(tooltip).toContain("Futures source timestamp");
+    expect(tooltip).toContain("87 ms before generated");
+    expect(tooltip).toContain("Futures received timestamp");
+    expect(tooltip).toContain("32 ms before generated");
+    expect(tooltip).toContain("chart-tooltip__row--wrap");
     expect(tooltip).toContain("+$3.25");
     expect(tooltip).toContain("−$19.35");
     expect(tooltip).toContain("3.0 seconds earlier");
@@ -179,6 +219,21 @@ describe("createCatchupChartOptions", () => {
     expect(ghost.itemStyle.borderWidth).toBeGreaterThan(0);
     expect(options.aria.show).toBe(true);
     expect(options.aria.label.description).toContain("hollow live projection marker");
+    expect(options.aria.label.description).toContain(
+      "target-aligned persisted futures-at-forecast snapshots",
+    );
+  });
+
+  it("styles persisted forecast futures distinctly and ignores legacy live futures input", () => {
+    const options = createCatchupChartOptions(chartModel());
+    const futures = namedSeries(options, CHART_SERIES_NAMES.futures);
+
+    expect(futures.lineStyle.color).toBe(DEFAULT_CHART_PALETTE.futures);
+    expect(futures.lineStyle.type).toEqual([2, 3]);
+    expect(futures.data[0].raw.futuresAtForecastDecimal).toBe("64110.5000");
+    expect(futures.data[0].value[1]).toBe(64_110.5);
+    expect(futures.data[0].value[1]).not.toBe(99_999);
+    expect(options.graphic[0].style.text).toContain("persisted futures snapshots");
   });
 
   it("hides the baseline by default and labels historical projection identity honestly", () => {
@@ -186,8 +241,67 @@ describe("createCatchupChartOptions", () => {
     const projected = options.series.find((series) => series.name.includes(IDENTITY_LABEL));
 
     expect(options.legend.selected[CHART_SERIES_NAMES.baseline]).toBe(false);
+    expect(options.legend.selected[CHART_SERIES_NAMES.contextualActual]).toBe(false);
     expect(projected.name).toBe(`${IDENTITY_LABEL} · projected`);
     expect(projected.lineStyle.type).toEqual([8, 5]);
+  });
+
+  it("shows one-second context only as the default fallback when paired actual is absent", () => {
+    const model = chartModel();
+    model.shadowSeries.actual = [];
+    model.shadowSeries.futures = [];
+    model.shadowSeries.projected = [];
+    model.shadowSeries.baseline = [];
+    model.shadowSeries.points = [];
+    model.contextualActual = [
+      {
+        targetMs: scoredPoint.targetMs,
+        actualDecimal: scoredPoint.actualDecimal,
+        decimal: scoredPoint.actualDecimal,
+        plotValue: 64_099.82,
+        value: 64_099.82,
+      },
+    ];
+
+    const options = createCatchupChartOptions(model);
+
+    expect(options.legend.selected[CHART_SERIES_NAMES.contextualActual]).toBe(true);
+    expect(namedSeries(options, CHART_SERIES_NAMES.contextualActual)).toBeDefined();
+  });
+
+  it("keeps context hidden when evaluation targets exist but paired actual is null", () => {
+    const model = chartModel();
+    model.shadowSeries.actual = [
+      linePoint({ ...scoredPoint, actualDecimal: null }, "actualDecimal", null),
+    ];
+    model.contextualActual = [
+      {
+        targetMs: scoredPoint.targetMs,
+        actualDecimal: scoredPoint.actualDecimal,
+        decimal: scoredPoint.actualDecimal,
+        plotValue: 64_099.82,
+        value: 64_099.82,
+      },
+    ];
+
+    const options = createCatchupChartOptions(model);
+    expect(options.legend.selected[CHART_SERIES_NAMES.contextualActual]).toBe(false);
+  });
+
+  it("shows persisted futures and forecast-time tooltip evidence in Recent mode", () => {
+    const model = chartModel({ mode: "recent" });
+    const options = createCatchupChartOptions(model);
+    const projected = options.series.find((series) => series.name.includes(IDENTITY_LABEL));
+    const futures = namedSeries(options, CHART_SERIES_NAMES.futures);
+    const tooltip = options.tooltip.formatter([
+      { data: projected.data[0] },
+      { data: futures.data[0] },
+    ]);
+
+    expect(futures).toBeDefined();
+    expect(tooltip).toContain("Futures at forecast");
+    expect(tooltip).toContain("32 ms before generated");
+    expect(options.graphic[0].style.text).toContain("persisted futures snapshots");
   });
 
   it("fails closed by omitting projections, baseline, and ghost", () => {
@@ -201,5 +315,6 @@ describe("createCatchupChartOptions", () => {
     expect(names).not.toContain(CHART_SERIES_NAMES.liveGhost);
     expect(names.some((name) => name.includes("projected"))).toBe(false);
     expect(names).toContain(CHART_SERIES_NAMES.actual);
+    expect(names).toContain(CHART_SERIES_NAMES.futures);
   });
 });

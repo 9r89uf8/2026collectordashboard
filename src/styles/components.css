@@ -196,7 +196,8 @@
 
 .segmented-button,
 .nav-button,
-.refresh-button {
+.refresh-button,
+.download-button {
   min-height: 32px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -224,7 +225,8 @@
 
 .segmented-button:hover,
 .nav-button:hover,
-.refresh-button:hover {
+.refresh-button:hover,
+.download-button:not([aria-disabled="true"]):hover {
   color: var(--text);
   border-color: var(--grid);
   background: rgba(255, 255, 255, 0.035);
@@ -249,7 +251,8 @@
   line-height: 1;
 }
 
-.refresh-button {
+.refresh-button,
+.download-button {
   min-height: var(--control-height);
   display: inline-flex;
   align-items: center;
@@ -260,9 +263,19 @@
   background: rgba(13, 20, 28, 0.65);
 }
 
+.download-button {
+  color: var(--actual);
+  border-color: rgba(66, 199, 232, 0.22);
+  background: rgba(66, 199, 232, 0.055);
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
 .segmented-button:focus-visible,
 .nav-button:focus-visible,
 .refresh-button:focus-visible,
+.download-button:focus-visible,
 .details-disclosure summary:focus-visible,
 a:focus-visible,
 button:focus-visible {
@@ -273,9 +286,14 @@ button:focus-visible {
 
 .segmented-button:disabled,
 .nav-button:disabled,
-.refresh-button:disabled {
+.refresh-button:disabled,
+.download-button[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.35;
+}
+
+.download-button[aria-disabled="true"] {
+  pointer-events: none;
 }
 
 .market-window-label {
@@ -1286,6 +1304,12 @@ button:focus-visible {
   white-space: normal;
 }
 
+.chart-tooltip__row--wrap .chart-tooltip__value {
+  max-width: 14rem;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .chart-tooltip--compact .chart-tooltip__value {
   max-width: 14rem;
   white-space: normal;
@@ -1356,6 +1380,10 @@ button:focus-visible {
   .refresh-button::before {
     content: "↻";
     font-size: 1rem;
+  }
+
+  .download-button {
+    width: 100%;
   }
 
   .chart-tooltip {

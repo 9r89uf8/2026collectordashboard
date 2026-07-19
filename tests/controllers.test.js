@@ -90,6 +90,7 @@ describe('LiveController', () => {
     const controller = new LiveController({
       modelVersion: 'catchup_ratio_l3000_b100',
       documentRef,
+      onEvent: vi.fn(),
     })
 
     controller.start()
@@ -98,6 +99,8 @@ describe('LiveController', () => {
 
     documentRef.hidden = false
     documentRef.dispatchEvent(new Event('visibilitychange'))
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(0)
     await flushPromises()
 
     expect(apiMocks.getCurrentLive).toHaveBeenCalledTimes(1)
@@ -110,11 +113,103 @@ describe('LiveController', () => {
     expect(apiMocks.getCurrentLive).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(1)
     expect(apiMocks.getCurrentLive).toHaveBeenCalledTimes(2)
+    expect(apiMocks.getShadowEvaluations).toHaveBeenCalledTimes(2)
+
+    documentRef.hidden = true
+    documentRef.dispatchEvent(new Event('visibilitychange'))
+    await flushPromises()
+    documentRef.hidden = false
+    documentRef.dispatchEvent(new Event('visibilitychange'))
+    await flushPromises()
+    expect(apiMocks.getCurrentLive).toHaveBeenCalledTimes(3)
 
     controller.stop()
   })
 
-  it('emits one error per failed live request and honors the one-second first retry', async () => {
+  it('keeps the one-second live poller running while a secondary refresh is slow', async () => {
+    const slowContext = deferred()
+    apiMocks.getCurrentLive.mockResolvedValue(livePayload(1))
+    apiMocks.getMarketData.mockReturnValue(slowContext.promise)
+    const controller = new LiveController({
+      modelVersion: 'catchup_ratio_l3000_b100',
+      documentRef: fakeDocument(false),
+      onEvent: vi.fn(),
+    })
+
+    controller.start()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(0)
+    await flushPromises()
+
+    expect(apiMocks.getCurrentLive).toHaveBeenCalledTimes(1)
+    expect(apiMocks.getMarketData).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(999)
+    expect(apiMocks.getCurrentLive).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(apiMocks.getCurrentLive).toHaveBeenCalledTimes(2)
+
+    controller.stop()
+    slowContext.resolve(payloadFor(1))
+    await flushPromises()
+  })
+
+  it('emits the backend server time with a successful live response', async () => {
+    const events = []
+    apiMocks.getCurrentLive.mockResolvedValue(livePayload(1))
+    const controller = new LiveController({
+      modelVersion: 'catchup_ratio_l3000_b100',
+      documentRef: fakeDocument(false),
+      onEvent: (event) => events.push(event),
+    })
+    const signal = new AbortController().signal
+    await controller.fetchLive(signal)
+
+    const success = events.find((event) => (
+      event.type === 'resource' && event.name === 'live' && event.status === 'success'
+    ))
+    expect(success).toEqual(expect.objectContaining({
+      type: 'resource',
+      name: 'live',
+      status: 'success',
+      serverTimeMs: livePayload(1).server_time_ms,
+    }))
+  })
+
+  it('serializes rapid hide/show visible refreshes even when abort is ignored', async () => {
+    const firstLive = deferred()
+    const secondLive = deferred()
+    const documentRef = fakeDocument(false)
+    apiMocks.getCurrentLive
+      .mockReturnValueOnce(firstLive.promise)
+      .mockReturnValueOnce(secondLive.promise)
+    const controller = new LiveController({
+      modelVersion: 'catchup_ratio_l3000_b100',
+      documentRef,
+      onEvent: vi.fn(),
+    })
+
+    controller.start()
+    await flushPromises()
+    expect(apiMocks.getCurrentLive).toHaveBeenCalledTimes(1)
+
+    documentRef.hidden = true
+    documentRef.dispatchEvent(new Event('visibilitychange'))
+    documentRef.hidden = false
+    documentRef.dispatchEvent(new Event('visibilitychange'))
+    await flushPromises()
+    expect(apiMocks.getCurrentLive).toHaveBeenCalledTimes(1)
+
+    firstLive.resolve(livePayload(1))
+    await flushPromises()
+    expect(apiMocks.getCurrentLive).toHaveBeenCalledTimes(2)
+
+    secondLive.resolve(livePayload(1))
+    await flushPromises()
+    controller.stop()
+  })
+
+  it('emits one error per failed request and backs off after the first scheduled retry', async () => {
     const failure = new Error('API offline')
     const events = []
     apiMocks.getCurrentLive.mockRejectedValue(failure)
@@ -133,11 +228,19 @@ describe('LiveController', () => {
     expect(apiMocks.getCurrentLive).toHaveBeenCalledTimes(1)
     expect(liveErrors()).toHaveLength(1)
 
+    // The visible-anchor attempt is outside the poller. The first scheduled
+    // retry uses the normal one-second cadence; once that fails, backoff is 1 s.
     await vi.advanceTimersByTimeAsync(999)
     expect(apiMocks.getCurrentLive).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(1)
     expect(apiMocks.getCurrentLive).toHaveBeenCalledTimes(2)
     expect(liveErrors()).toHaveLength(2)
+
+    await vi.advanceTimersByTimeAsync(999)
+    expect(apiMocks.getCurrentLive).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(apiMocks.getCurrentLive).toHaveBeenCalledTimes(3)
+    expect(liveErrors()).toHaveLength(3)
 
     controller.stop()
   })

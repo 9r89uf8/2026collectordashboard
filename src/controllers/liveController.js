@@ -3,6 +3,9 @@ import { getShadowEvaluations } from '../api/shadowEvaluations.js'
 import { createPoller, createPollingGroup } from './polling.js'
 import { isAbortError, marketFromPayload, marketsFromPayload, serverTimeOf } from './controllerUtils.js'
 
+export const LIVE_POLL_INTERVAL_MS = 1_000
+export const EVALUATIONS_POLL_INTERVAL_MS = 1_000
+
 export class LiveController {
   constructor({ modelVersion, onEvent, documentRef = globalThis.document }) {
     this.modelVersion = modelVersion
@@ -11,6 +14,7 @@ export class LiveController {
     this.anchor = null
     this.pollers = null
     this.group = null
+    this.visibleRefreshLiveSucceeded = false
   }
 
   emit(event) {
@@ -22,11 +26,11 @@ export class LiveController {
 
     const livePoller = createPoller(
       (signal) => this.fetchLive(signal),
-      { intervalMs: 1000 },
+      { intervalMs: LIVE_POLL_INTERVAL_MS },
     )
     const evaluationsPoller = createPoller(
       (signal) => this.fetchEvaluations(signal),
-      { intervalMs: 2000 },
+      { intervalMs: EVALUATIONS_POLL_INTERVAL_MS },
     )
     const dataPoller = createPoller(
       (signal) => this.fetchContext(signal),
@@ -45,6 +49,7 @@ export class LiveController {
     this.group = createPollingGroup(Object.values(this.pollers), {
       documentRef: this.documentRef,
       onVisibleRefresh: async (signal) => {
+        this.visibleRefreshLiveSucceeded = false
         try {
           await this.fetchLive(signal)
         } catch (error) {
@@ -52,17 +57,20 @@ export class LiveController {
 
           // fetchLive already emitted the resource error. Keep discovery
           // independent and let the live poller retry after its normal
-          // one-second cadence instead of duplicating the failed request now.
-          await Promise.allSettled([this.fetchDiscovery(signal)])
+          // cadence instead of duplicating the failed request now.
           return
         }
         if (!this.anchor || signal.aborted) return
-        await Promise.allSettled([
-          this.fetchEvaluations(signal),
-          this.fetchContext(signal),
-          this.fetchSources(signal),
-          this.fetchDiscovery(signal),
-        ])
+        this.visibleRefreshLiveSucceeded = true
+      },
+      onPollersResumed: ({ immediate }) => {
+        if (!immediate || !this.pollers) return
+        const names = this.visibleRefreshLiveSucceeded
+          ? ['evaluationsPoller', 'dataPoller', 'sourcesPoller', 'discoveryPoller']
+          : ['discoveryPoller']
+        // These refreshes run through active child pollers, so slow secondary
+        // requests cannot delay the independent live poller.
+        names.forEach((name) => this.pollers?.[name]?.refresh())
       },
     })
     return this.group.start()
@@ -73,6 +81,7 @@ export class LiveController {
     this.group = null
     this.pollers = null
     this.anchor = null
+    this.visibleRefreshLiveSucceeded = false
   }
 
   switchAnchor(market) {
@@ -101,12 +110,13 @@ export class LiveController {
       if (!this.anchor || this.anchor.marketId !== market.marketId) this.switchAnchor(market)
       else this.anchor = market
 
+      const serverTimeMs = serverTimeOf(payload)
       this.emit({
         type: 'resource',
         name: 'live',
         status: 'success',
         data: payload,
-        serverTimeMs: serverTimeOf(payload),
+        serverTimeMs,
       })
       return payload
     } catch (error) {

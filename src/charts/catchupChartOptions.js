@@ -1,7 +1,8 @@
 import Decimal from "decimal.js";
 
 export const CHART_SERIES_NAMES = Object.freeze({
-  actual: "Actual at targets",
+  actual: "Actual Chainlink",
+  futures: "Futures at forecast",
   projected: "Projected Chainlink",
   baseline: "No-change baseline",
   contextualActual: "Actual context (1s)",
@@ -16,6 +17,7 @@ export const DEFAULT_CHART_PALETTE = Object.freeze({
   text: "#ecf2f8",
   muted: "#8d9aaa",
   actual: "#42c7e8",
+  futures: "#e879f9",
   projected: "#f4b860",
   baseline: "#8793a3",
   threshold: "#a78bfa",
@@ -24,10 +26,13 @@ export const DEFAULT_CHART_PALETTE = Object.freeze({
 });
 
 export const FORECAST_PATH_NOTE =
-  "Dashed values are independent three-second target forecasts, not a predicted continuous price path.";
+  "Dashed: independent three-second target projections, not a continuous path.";
+export const FUTURES_PATH_NOTE =
+  "Dotted: persisted futures snapshots captured when forecasts were generated, plotted at target time for comparison.";
 
 const FINANCIAL_FIELDS = Object.freeze({
   actual: ["actualDecimal", "actual_chainlink", "actual"],
+  futures: ["futuresAtForecastDecimal", "futures_at_forecast", "futuresDecimal"],
   projected: ["projectedDecimal", "projected_chainlink", "projected"],
   baseline: ["baselineDecimal", "chainlinkAtForecastDecimal", "chainlink_at_forecast", "baseline"],
   contextualActual: ["actualDecimal", "contextualActualDecimal", "chainlink", "price"],
@@ -41,6 +46,19 @@ const TOOLTIP_FIELD_ALIASES = Object.freeze({
   horizonMs: ["horizonMs", "horizon_ms"],
   projectedDecimal: ["projectedDecimal", "projected_chainlink", "projected"],
   actualDecimal: ["actualDecimal", "actual_chainlink", "actual"],
+  futuresAtForecastDecimal: [
+    "futuresAtForecastDecimal",
+    "futures_at_forecast",
+    "futuresDecimal",
+  ],
+  futuresAtForecastSourceTimestampMs: [
+    "futuresAtForecastSourceTimestampMs",
+    "futures_at_forecast_source_timestamp_ms",
+  ],
+  futuresAtForecastReceivedMs: [
+    "futuresAtForecastReceivedMs",
+    "futures_at_forecast_received_ms",
+  ],
   baselineDecimal: ["baselineDecimal", "chainlinkAtForecastDecimal", "chainlink_at_forecast", "baseline"],
   forecastErrorDecimal: ["forecastErrorDecimal", "forecast_error"],
   baselineErrorDecimal: ["baselineErrorDecimal", "baseline_error"],
@@ -155,6 +173,18 @@ function formatHorizon(milliseconds) {
   return `${exact} seconds earlier`;
 }
 
+function formatRelativeToGenerated(timestampMs, generatedMs) {
+  if (!Number.isFinite(timestampMs)) return "Unavailable";
+  const timestamp = formatUtcTimestamp(timestampMs);
+  if (!Number.isFinite(generatedMs)) return timestamp;
+
+  const offsetMs = timestampMs - generatedMs;
+  if (offsetMs === 0) return `${timestamp} · at generation`;
+  return `${timestamp} · ${Math.abs(offsetMs)} ms ${
+    offsetMs < 0 ? "before" : "after"
+  } generated`;
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -233,6 +263,13 @@ function formatForecastTooltip(raw, { marketId, threshold } = {}) {
   );
   const projected = tooltipValue(raw, "projectedDecimal");
   const actual = tooltipValue(raw, "actualDecimal");
+  const futuresAtForecast = tooltipValue(raw, "futuresAtForecastDecimal");
+  const futuresSourceTimestampMs = firstFinite(
+    tooltipValue(raw, "futuresAtForecastSourceTimestampMs"),
+  );
+  const futuresReceivedMs = firstFinite(
+    tooltipValue(raw, "futuresAtForecastReceivedMs"),
+  );
   const baseline = tooltipValue(raw, "baselineDecimal");
   const forecastError = firstPresent(
     tooltipValue(raw, "forecastErrorDecimal"),
@@ -258,18 +295,38 @@ function formatForecastTooltip(raw, { marketId, threshold } = {}) {
 
   const rows = [
     tooltipRow("Target", formatUtcTimestamp(targetMs)),
+    tooltipRow("Forecast generated", formatUtcTimestamp(generatedMs)),
     tooltipRow("Projected Chainlink", formatFinancial(projected)),
-    tooltipRow("Actual at target", formatFinancial(actual)),
+    tooltipRow("Actual Chainlink", formatFinancial(actual)),
+    tooltipRow("Futures at forecast", formatFinancial(futuresAtForecast)),
+  ];
+
+  if (safeDecimal(futuresAtForecast) !== null) {
+    rows.push(
+      tooltipRow(
+        "Futures source timestamp",
+        formatRelativeToGenerated(futuresSourceTimestampMs, generatedMs),
+        "wrap",
+      ),
+      tooltipRow(
+        "Futures received timestamp",
+        formatRelativeToGenerated(futuresReceivedMs, generatedMs),
+        "wrap",
+      ),
+    );
+  }
+
+  if (actualMargin !== null) {
+    rows.push(tooltipRow("Actual vs market open", formatFinancial(actualMargin, { signed: true })));
+  }
+
+  rows.push(
     tooltipRow("Forecast error", formatFinancial(forecastError, { signed: true })),
     tooltipRow("Absolute error", formatFinancial(absoluteError)),
     tooltipRow("No-change error", formatFinancial(baselineError, { signed: true })),
     tooltipRow("Generated", formatHorizon(horizonMs)),
     tooltipRow("Status", String(status)),
-  ];
-
-  if (actualMargin !== null) {
-    rows.splice(6, 0, tooltipRow("Actual vs market open", formatFinancial(actualMargin, { signed: true })));
-  }
+  );
 
   if (forecastMarketId !== undefined && String(forecastMarketId) !== String(marketId)) {
     rows.push(tooltipRow("Generated in market", String(forecastMarketId)));
@@ -347,6 +404,10 @@ function resolveShadowSeries(model) {
   const source = model.shadowSeries ?? model.seriesModel ?? model.series ?? {};
   return {
     actual: source.actual ?? model.actual ?? [],
+    futures:
+      source.futures ??
+      source.series?.futures ??
+      [],
     projected: source.projected ?? model.projected ?? [],
     baseline: source.baseline ?? model.baseline ?? [],
     points: source.points ?? model.points ?? [],
@@ -456,6 +517,7 @@ function lineDatum(item, kind, metadata) {
   if (decimal !== null) {
     const decimalField = {
       actual: "actualDecimal",
+      futures: "futuresAtForecastDecimal",
       projected: "projectedDecimal",
       baseline: "baselineDecimal",
       contextualActual: "actualDecimal",
@@ -632,6 +694,7 @@ function ghostSeries(ghost, metadataByTarget, palette) {
 
 function visibleSeriesDescription({
   actualData,
+  futuresData,
   projectedData,
   contextData,
   ghost,
@@ -641,6 +704,9 @@ function visibleSeriesDescription({
 }) {
   const descriptions = [];
   if (actualData.some((datum) => datum.value[1] !== null)) descriptions.push("paired actual Chainlink");
+  if (futuresData.some((datum) => datum.value[1] !== null)) {
+    descriptions.push("target-aligned persisted futures-at-forecast snapshots");
+  }
   if (projectionVisible && projectedData.some((datum) => datum.value[1] !== null)) {
     descriptions.push(`dashed ${projectionSeriesName}`);
   }
@@ -664,7 +730,9 @@ function ariaDescription(model, market, seriesState) {
  * Expected model shape:
  * {
  *   market: { marketId, marketStartMs, marketEndMs },
- *   shadowSeries: { actual, projected, baseline, points, projectionVisible },
+ *   shadowSeries: { actual, futures, projected, baseline, points, projectionVisible },
+ *   shadowSeries.futures: [{ targetMs, plotValue, futuresAtForecastDecimal,
+ *     futuresAtForecastSourceTimestampMs, futuresAtForecastReceivedMs }],
  *   contextualActual: [{ targetMs, plotValue, decimal }],
  *   liveGhost: { targetMs, plotValue, projectedDecimal, generatedMs, horizonMs } | null,
  *   threshold: { plotValue, decimal, label } | null
@@ -685,6 +753,10 @@ export function createCatchupChartOptions(model, runtime = {}) {
     createLineData(shadow.actual, "actual", metadataByTarget),
     market,
   );
+  const futuresData = pointsInsideMarket(
+    createLineData(shadow.futures, "futures", metadataByTarget),
+    market,
+  );
   const projectedData = pointsInsideMarket(
     createLineData(shadow.projected, "projected", metadataByTarget),
     market,
@@ -702,8 +774,13 @@ export function createCatchupChartOptions(model, runtime = {}) {
   const containerWidth = firstFinite(runtime.containerWidth, model.containerWidth, 900);
   const compact = runtime.compact ?? containerWidth < 680;
   const reducedMotion = runtime.reducedMotion ?? model.reducedMotion ?? false;
+  const hasEvaluationTargets = shadow.points.some((point) => {
+    const targetMs = targetMsFor(point);
+    return Number.isFinite(targetMs) && targetMs >= market.startMs && targetMs < market.endMs;
+  });
   const legendSelected = {
     [CHART_SERIES_NAMES.baseline]: false,
+    [CHART_SERIES_NAMES.contextualActual]: !hasEvaluationTargets,
     ...(model.legendSelected ?? {}),
     ...(runtime.legendSelected ?? {}),
   };
@@ -735,6 +812,18 @@ export function createCatchupChartOptions(model, runtime = {}) {
       z: 5,
     }),
   );
+  if (futuresData.length > 0) {
+    series.push(
+      lineSeries({
+        name: CHART_SERIES_NAMES.futures,
+        data: futuresData,
+        color: palette.futures,
+        width: 1.75,
+        type: [2, 3],
+        z: 3,
+      }),
+    );
+  }
   if (projectionVisible) {
     series.push(
       lineSeries({
@@ -764,12 +853,19 @@ export function createCatchupChartOptions(model, runtime = {}) {
   const noteTop = 40;
   const noteWidth = Math.max(240, containerWidth - (compact ? 42 : 80));
   const noteLineHeight = compact && containerWidth < 470 ? 15 : 14;
-  const noteNeedsTwoLines = containerWidth < 620;
-  const chartTop = projectionVisible ? (noteNeedsTwoLines ? 93 : 76) : 62;
+  const chartNotes = [
+    projectionVisible ? FORECAST_PATH_NOTE : null,
+    futuresData.length > 0 ? FUTURES_PATH_NOTE : null,
+  ].filter(Boolean);
+  const noteNeedsTwoLines = containerWidth < (futuresData.length > 0 ? 880 : 620);
+  const chartTop = chartNotes.length > 0 ? (noteNeedsTwoLines ? 93 : 76) : 62;
   const seriesState = {
     actualData,
+    futuresData,
     projectedData,
-    contextData,
+    contextData: legendSelected[CHART_SERIES_NAMES.contextualActual]
+      ? contextData
+      : [],
     ghost: liveGhostSeries,
     threshold,
     projectionVisible,
@@ -793,7 +889,7 @@ export function createCatchupChartOptions(model, runtime = {}) {
       },
       decal: { show: false },
     },
-    color: [palette.actual, palette.projected, palette.baseline, palette.threshold],
+    color: [palette.actual, palette.futures, palette.projected, palette.baseline, palette.threshold],
     grid: {
       top: chartTop,
       right: compact ? 13 : threshold ? 128 : 24,
@@ -821,7 +917,7 @@ export function createCatchupChartOptions(model, runtime = {}) {
         fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
       },
     },
-    graphic: projectionVisible
+    graphic: chartNotes.length > 0
       ? [
           {
             type: "text",
@@ -829,7 +925,7 @@ export function createCatchupChartOptions(model, runtime = {}) {
             top: noteTop,
             silent: true,
             style: {
-              text: FORECAST_PATH_NOTE,
+              text: chartNotes.join(" "),
               fill: palette.muted,
               opacity: 0.78,
               font: "10.5px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
@@ -856,7 +952,10 @@ export function createCatchupChartOptions(model, runtime = {}) {
         color: palette.text,
         fontSize: 12,
       },
-      formatter: createTooltipFormatter({ marketId: market.marketId, threshold }),
+      formatter: createTooltipFormatter({
+        marketId: market.marketId,
+        threshold,
+      }),
       axisPointer: {
         type: "cross",
         snap: true,

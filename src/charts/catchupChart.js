@@ -35,6 +35,7 @@ const CSS_PALETTE_PROPERTIES = Object.freeze({
   text: "--text",
   muted: "--muted",
   actual: "--actual",
+  futures: "--futures",
   projected: "--projected",
   baseline: "--baseline",
   threshold: "--threshold",
@@ -58,6 +59,33 @@ function readChartPalette(element) {
 function currentWidth(container) {
   const width = container.getBoundingClientRect?.().width ?? container.clientWidth;
   return Number.isFinite(width) && width > 0 ? width : 900;
+}
+
+function chartContextKey(value) {
+  const market = value?.market ?? value?.window ?? {};
+  const mode = value?.mode ?? "unknown";
+  const marketId =
+    value?.marketId ??
+    value?.market_id ??
+    market.marketId ??
+    market.market_id ??
+    market.id ??
+    "unknown";
+  const startMs =
+    value?.marketStartMs ??
+    value?.market_start_ms ??
+    market.startMs ??
+    market.marketStartMs ??
+    market.market_start_ms ??
+    "unknown";
+  const endMs =
+    value?.marketEndMs ??
+    value?.market_end_ms ??
+    market.endMs ??
+    market.marketEndMs ??
+    market.market_end_ms ??
+    "unknown";
+  return `${mode}:${marketId}:${startMs}:${endMs}`;
 }
 
 function reducedMotionMedia() {
@@ -97,6 +125,7 @@ export function createCatchupChart(container, options = {}) {
   let lastWidth = currentWidth(container);
   let compact = lastWidth < COMPACT_BREAKPOINT_PX;
   let legendSelected = {};
+  let activeContextKey = null;
 
   container.classList.add("chart-canvas--ready");
   container.dataset.chart = "oracle-catch-up";
@@ -115,6 +144,11 @@ export function createCatchupChart(container, options = {}) {
   function render(nextModel = model) {
     if (disposed) throw new Error("Cannot render a disposed catch-up chart.");
     if (!nextModel) return;
+    const nextContextKey = chartContextKey(nextModel);
+    if (activeContextKey !== null && nextContextKey !== activeContextKey) {
+      legendSelected = {};
+    }
+    activeContextKey = nextContextKey;
     model = nextModel;
     chart.setOption(createCatchupChartOptions(model, runtime()), {
       notMerge: true,
@@ -179,6 +213,8 @@ export function createCatchupChart(container, options = {}) {
     clear() {
       if (disposed) return;
       model = null;
+      activeContextKey = null;
+      legendSelected = {};
       chart.clear();
     },
     dispose() {

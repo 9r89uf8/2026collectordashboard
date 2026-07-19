@@ -39,7 +39,7 @@ describe("createPoller", () => {
     vi.useRealTimers();
   });
 
-  it("schedules recursively after settlement and never overlaps requests", async () => {
+  it("keeps start-time cadence after settlement and never overlaps requests", async () => {
     const first = deferred();
     let active = 0;
     let maximumActive = 0;
@@ -68,11 +68,30 @@ describe("createPoller", () => {
 
     first.resolve();
     await flushPromises();
-    await vi.advanceTimersByTimeAsync(1_999);
-    expect(calls).toBe(1);
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(0);
     expect(calls).toBe(2);
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(calls).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls).toBe(3);
     expect(maximumActive).toBe(1);
+
+    poller.stop();
+  });
+
+  it("subtracts request duration from the healthy polling interval", async () => {
+    const task = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    });
+    const poller = createPoller(task, { intervalMs: 100 });
+
+    poller.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(task).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(99);
+    expect(task).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(task).toHaveBeenCalledTimes(2);
 
     poller.stop();
   });
