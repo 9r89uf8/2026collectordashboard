@@ -268,6 +268,32 @@ below the live signal and above or beside coverage. In Recent mode, a full-width
 strip immediately below the chart works well. On narrow screens, move the card
 below the chart.
 
+### Price-chart viewport
+
+Keep the complete five-minute market as the price chart's data domain while
+opening on an approximately 60-second window. For the live market's first
+minute, keep the viewport at `00:00`–`01:00` even when the latest target is only
+3–30 seconds after the start; after that, the untouched viewport ends at the
+latest target. Provide a visible horizontal ECharts `dataZoom` timeline slider
+below the plot and an `inside` data-zoom control. Direct plot drag pans,
+Ctrl+wheel zooms, and Shift+wheel pans. An ordinary wheel remains page
+scrolling and must not be captured by the chart. The slider overview, elapsed
+ticks, and handles need enough space to remain readable; the narrower default
+reduces the visual density of 500 ms evaluation points without hiding the rest
+of the market.
+
+Continue following the latest target until the user first moves the slider or
+uses inside pan/zoom. Preserve that user-selected viewport across polling,
+refreshes, resizes, legend changes, and other updates for the same mode and
+market. Reset to the context-appropriate 60-second default on a market change,
+Live rollover, or Live/Recent mode switch: `00:00`–`01:00` during the first
+live minute, then latest-following. Expanding or moving the slider must make the
+entire five-minute domain available at all times.
+
+Horizontal navigation changes only what is visible. Performance cohorts,
+coverage counts, and the card's labels continue to describe the complete
+returned market report, not merely the points inside the current viewport.
+
 Example desktop card:
 
 ```text
@@ -593,6 +619,10 @@ The frontend checkpoint is complete when tests demonstrate:
 - completed markets use the ID-addressed route without continuous polling;
 - the download helper rejects malformed market/model inputs and produces only
   the proxy-prefixed, ID-addressed URL with an encoded model query;
+- the visible data-zoom slider and inside pan start on an approximately
+  60-second viewport (`00:00`–`01:00` during the first live minute, then
+  latest-following), preserve user movement within the same market, reset on
+  market/mode change, and retain access to all five minutes;
 - `Download JSON` is limited to finished Recent markets and the attachment uses
   the contracted `btc_5m_market_{market_id}_shadow_evaluations_{model_version}.json`
   filename within the seven-day retention window;

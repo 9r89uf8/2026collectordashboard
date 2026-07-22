@@ -411,14 +411,45 @@ baseline is dotted, and the live ghost uses a hollow marker.
 
 ### Axes
 
-- Fix the x-axis to the selected half-open five-minute target window.
-- Display elapsed labels from `00:00` through `05:00` and show exact UTC in the
-  tooltip.
+- Keep the underlying x-axis domain fixed to the selected half-open five-minute
+  target window, even when the visible viewport shows only part of it.
+- Format x-axis ticks as elapsed values within `00:00` through `05:00` and show
+  exact UTC in the tooltip.
 - Keep the market end as a boundary; a target exactly at `market_end_ms`
   belongs to the next market.
 - Use a tight price y-axis with visible padding.
 - Do not smooth any price series.
 - Do not connect across `null` values.
+
+### Horizontal viewport and navigation
+
+Use two coordinated ECharts `dataZoom` components on the time axis: a visible
+horizontal timeline slider below the plot and an `inside` control for panning
+and zooming directly in the plot. Reserve enough bottom grid space for the
+slider, elapsed tick labels, and handles to remain legible on a laptop and
+compact screen. The slider is both an overview of the five-minute market and
+the visible pointer/touch affordance for changing the time window.
+
+Inside the plot, a direct pointer drag pans the time range, Ctrl+wheel zooms,
+and Shift+wheel pans horizontally. An unmodified mouse wheel must continue to
+scroll the page; the chart must not capture ordinary wheel navigation.
+
+The initial viewport is approximately 60 seconds wide. During a live market's
+first minute, keep it fixed at `market_start_ms` through
+`market_start_ms + 60_000`, even if the latest available target is only 3–30
+seconds into the market. After the first minute, keep the untouched window
+following the latest target until the user first moves the slider or uses
+inside navigation. After that interaction, preserve the user's chosen range so
+polling cannot pull an inspection of earlier data back to the end.
+
+Viewport state belongs to the exact mode and market context. Preserve it across
+polls, manual refreshes, chart resizes, legend changes, and series updates while
+that context is unchanged. Reset to the context-appropriate approximately
+60-second default whenever the market or mode changes, including a Live
+rollover: `00:00`–`01:00` during the first live minute, then latest-following.
+The full five-minute domain and all retained points must remain reachable by
+expanding or moving the slider; `dataZoom` changes presentation, not the
+report, coverage, or performance sample.
 
 ### Series
 
@@ -690,7 +721,8 @@ group rather than presenting it as a completed review.
 
 The first version should show:
 
-- the full fixed five-minute chart;
+- a readable default viewport with the full fixed five-minute domain available
+  through the horizontal slider and inside navigation;
 - actual and projected target-time lines;
 - the opening threshold when available;
 - paired/scored coverage counts;
@@ -965,7 +997,9 @@ summary metrics must use `Decimal` constructed from the string fields.
 - Provide a text summary of the selected market and visible series.
 - Add a keyboard-accessible table of recent scored points below the visual
   chart, collapsible by default.
-- Make every control keyboard operable with visible focus.
+- Make every HTML control keyboard operable with visible focus. Treat the
+  canvas data-zoom slider and inside pan as pointer/touch navigation, not as a
+  replacement for the keyboard-accessible evidence table and market controls.
 - Announce API disconnection and recovery through an
   `aria-live="polite"` region.
 - Use line patterns and markers in addition to color.
@@ -991,6 +1025,11 @@ Block release unless tests prove:
   observation triples, and post-cutoff received timestamps fail validation;
 - the download helper validates its inputs and returns only the proxy-prefixed,
   ID-addressed URL with an encoded `model_version` query;
+- the default viewport is approximately 60 seconds, remains `00:00`–`01:00`
+  during the first live minute, then follows the latest target until a user
+  data-zoom interaction, while still exposing the full five-minute domain;
+- a user-adjusted viewport survives same-market updates and resets on a market
+  or mode change;
 - target-time half-open market boundaries are correct;
 - a forecast generated in the preceding market can enter the selected target
   window;
@@ -1062,7 +1101,8 @@ Phase one is complete when:
 - Vite and preview bind only to `127.0.0.1`;
 - all API calls go through the Vite proxy and SSH tunnel;
 - a user can choose Live or a discovered recent market;
-- the chart always spans exactly one five-minute target window;
+- the chart's data domain always spans exactly one five-minute target window,
+  with a visible slider/inside viewport for readable navigation;
 - actual and projected Chainlink are aligned at `target_ms`;
 - persisted forecast-time futures inputs are aligned at `target_ms`, clearly
   distinguished from target-time actuals, with null inputs left as gaps;

@@ -62,6 +62,29 @@ futures buffer, or substitute top-level `futures.last` or signal-level
 `futures_now` for this persisted field. `/markets/current/live` remains
 latest-only data for the live signal and ghost marker.
 
+## Horizontal chart viewport
+
+The chart keeps the complete five-minute market as its x-axis data domain, but
+opens on a roughly 60-second window. During a Live market's first minute that
+viewport stays fixed from `00:00` through `01:00`, even when the latest target
+is only a few seconds into the market. After the first minute, the untouched
+viewport ends at the latest available target. A visible horizontal ECharts
+`dataZoom` timeline slider provides an overview and draggable window. Inside
+the plot, direct drag pans, Ctrl+wheel zooms, and Shift+wheel pans; an ordinary
+wheel remains normal page scrolling. The full five-minute history remains
+available, and viewport changes never remove evaluation points.
+
+While the viewport remains untouched, updates that add points follow the latest
+target. The first slider or inside-pan interaction stops that automatic
+movement so the user can inspect an earlier interval without polling pulling
+the chart away.
+The chosen viewport survives data refreshes, resizes, and other updates within
+the same market. Switching market or switching between Live and Recent resets
+it to the context-appropriate 60-second default: `00:00`–`01:00` during the
+first live minute, then latest-following. The narrower initial window keeps
+dense 500 ms lines and crosshair tooltips readable without pretending the
+market is shorter than five minutes.
+
 ## Downloading a finished evaluation report
 
 Recent mode offers `Download JSON` only for a selected finished market. The

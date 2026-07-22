@@ -2,6 +2,7 @@ import * as echarts from "echarts/core";
 import { LineChart, ScatterChart } from "echarts/charts";
 import {
   AriaComponent,
+  DataZoomComponent,
   GraphicComponent,
   GridComponent,
   LegendComponent,
@@ -17,6 +18,7 @@ echarts.use([
   LineChart,
   ScatterChart,
   AriaComponent,
+  DataZoomComponent,
   GraphicComponent,
   GridComponent,
   LegendComponent,
@@ -88,6 +90,64 @@ function chartContextKey(value) {
   return `${mode}:${marketId}:${startMs}:${endMs}`;
 }
 
+function chartMarketExtent(value) {
+  const market = value?.market ?? value?.window ?? {};
+  const startMs =
+    value?.marketStartMs ??
+    value?.market_start_ms ??
+    market.startMs ??
+    market.marketStartMs ??
+    market.market_start_ms;
+  const endMs =
+    value?.marketEndMs ??
+    value?.market_end_ms ??
+    market.endMs ??
+    market.marketEndMs ??
+    market.market_end_ms;
+  return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs
+    ? { startMs, endMs }
+    : null;
+}
+
+function finiteEventNumber(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function dataZoomPayload(event) {
+  const payloads = Array.isArray(event?.batch) ? event.batch : [event];
+  return payloads.find(
+    (payload) =>
+      payload &&
+      [payload.startValue, payload.endValue, payload.start, payload.end].some(
+        (value) => finiteEventNumber(value) !== null,
+      ),
+  ) ?? null;
+}
+
+function dataZoomWindowFromEvent(event, model) {
+  const extent = chartMarketExtent(model);
+  const payload = dataZoomPayload(event);
+  if (!extent || !payload) return null;
+
+  let startValue = finiteEventNumber(payload.startValue);
+  let endValue = finiteEventNumber(payload.endValue);
+  if (startValue === null || endValue === null) {
+    const startPercent = finiteEventNumber(payload.start);
+    const endPercent = finiteEventNumber(payload.end);
+    if (startPercent === null || endPercent === null) return null;
+    const durationMs = extent.endMs - extent.startMs;
+    startValue = extent.startMs + (durationMs * Math.min(100, Math.max(0, startPercent))) / 100;
+    endValue = extent.startMs + (durationMs * Math.min(100, Math.max(0, endPercent))) / 100;
+  }
+
+  startValue = Math.min(extent.endMs, Math.max(extent.startMs, startValue));
+  endValue = Math.min(extent.endMs, Math.max(extent.startMs, endValue));
+  return endValue > startValue ? { startValue, endValue } : null;
+}
+
 function reducedMotionMedia() {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") return null;
   return window.matchMedia(REDUCED_MOTION_QUERY);
@@ -126,6 +186,7 @@ export function createCatchupChart(container, options = {}) {
   let compact = lastWidth < COMPACT_BREAKPOINT_PX;
   let legendSelected = {};
   let activeContextKey = null;
+  let dataZoomWindow = null;
 
   container.classList.add("chart-canvas--ready");
   container.dataset.chart = "oracle-catch-up";
@@ -138,6 +199,7 @@ export function createCatchupChart(container, options = {}) {
       compact: width < COMPACT_BREAKPOINT_PX,
       reducedMotion: media?.matches === true,
       legendSelected,
+      dataZoomWindow,
     };
   }
 
@@ -147,6 +209,7 @@ export function createCatchupChart(container, options = {}) {
     const nextContextKey = chartContextKey(nextModel);
     if (activeContextKey !== null && nextContextKey !== activeContextKey) {
       legendSelected = {};
+      dataZoomWindow = null;
     }
     activeContextKey = nextContextKey;
     model = nextModel;
@@ -189,7 +252,14 @@ export function createCatchupChart(container, options = {}) {
     legendSelected = { ...event.selected };
   }
 
+  function handleDataZoom(event) {
+    chart.dispatchAction?.({ type: "hideTip" });
+    const nextWindow = dataZoomWindowFromEvent(event, model);
+    if (nextWindow) dataZoomWindow = nextWindow;
+  }
+
   chart.on("legendselectchanged", handleLegendSelection);
+  chart.on("datazoom", handleDataZoom);
 
   const ResizeObserverConstructor = options.ResizeObserver ?? globalThis.ResizeObserver;
   const resizeObserver = ResizeObserverConstructor
@@ -215,6 +285,7 @@ export function createCatchupChart(container, options = {}) {
       model = null;
       activeContextKey = null;
       legendSelected = {};
+      dataZoomWindow = null;
       chart.clear();
     },
     dispose() {
@@ -226,6 +297,7 @@ export function createCatchupChart(container, options = {}) {
       }
       unsubscribeMotion();
       chart.off("legendselectchanged", handleLegendSelection);
+      chart.off("datazoom", handleDataZoom);
       if (resizeFrame !== null) {
         const cancelFrame = globalThis.cancelAnimationFrame ?? clearTimeout;
         cancelFrame(resizeFrame);

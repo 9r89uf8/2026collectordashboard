@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CHART_DATA_ZOOM_IDS,
   CHART_SERIES_NAMES,
+  DEFAULT_VISIBLE_WINDOW_MS,
   DEFAULT_CHART_PALETTE,
   createCatchupChartOptions,
 } from "../src/charts/catchupChartOptions.js";
@@ -142,17 +144,109 @@ describe("createCatchupChartOptions", () => {
   it("locks the elapsed time axis to the exact half-open five-minute window", () => {
     const options = createCatchupChartOptions(chartModel());
     const actual = namedSeries(options, CHART_SERIES_NAMES.actual);
+    const slider = options.dataZoom.find((zoom) => zoom.type === "slider");
+    const inside = options.dataZoom.find((zoom) => zoom.type === "inside");
 
     expect(options.xAxis).toMatchObject({
       type: "time",
       min: MARKET_START_MS,
       max: MARKET_END_MS,
-      minInterval: 60_000,
+      minInterval: 1_000,
       maxInterval: 60_000,
+      splitNumber: 6,
     });
     expect(options.xAxis.axisLabel.formatter(MARKET_START_MS)).toBe("00:00");
     expect(options.xAxis.axisLabel.formatter(MARKET_END_MS)).toBe("05:00");
+    expect(options.xAxis.max - options.xAxis.min).toBe(300_000);
     expect(actual.data.every((datum) => datum.value[0] < MARKET_END_MS)).toBe(true);
+    expect(slider).toMatchObject({
+      id: CHART_DATA_ZOOM_IDS.slider,
+      show: true,
+      xAxisIndex: 0,
+      filterMode: "none",
+      minValueSpan: 5_000,
+      startValue: MARKET_START_MS,
+      endValue: MARKET_START_MS + DEFAULT_VISIBLE_WINDOW_MS,
+    });
+    expect(inside).toMatchObject({
+      id: CHART_DATA_ZOOM_IDS.inside,
+      xAxisIndex: 0,
+      filterMode: "none",
+      minValueSpan: 5_000,
+      startValue: slider.startValue,
+      endValue: slider.endValue,
+      moveOnMouseMove: true,
+      zoomOnMouseWheel: "ctrl",
+      moveOnMouseWheel: "shift",
+    });
+    expect(slider.labelFormatter(MARKET_START_MS + 60_000)).toBe("01:00");
+    expect(options.grid.bottom).toBeGreaterThan(slider.bottom + slider.height);
+    expect(options.aria.label.description).toContain(
+      "horizontally scrollable and zoomable",
+    );
+    expect(options.aria.label.description).toContain("Ctrl+wheel to zoom");
+    expect(options.aria.label.description).toContain("Shift+wheel to pan");
+    expect(options.aria.label.description).toContain(
+      "ordinary wheel scrolling is not captured",
+    );
+  });
+
+  it("anchors the default one-minute window at the latest available ghost point", () => {
+    const model = chartModel();
+    const latestTargetMs = MARKET_START_MS + 180_000;
+    model.shadowSeries.ghost = {
+      ...model.shadowSeries.ghost,
+      targetMs: latestTargetMs,
+      generatedMs: latestTargetMs - 3_000,
+      key: "catchup_ratio_l3000_b100:latest:3000",
+    };
+
+    const options = createCatchupChartOptions(model);
+    const slider = options.dataZoom.find((zoom) => zoom.type === "slider");
+
+    expect(slider.startValue).toBe(latestTargetMs - DEFAULT_VISIBLE_WINDOW_MS);
+    expect(slider.endValue).toBe(latestTargetMs);
+  });
+
+  it("defaults an empty market to its first minute", () => {
+    const model = chartModel();
+    model.shadowSeries.actual = [];
+    model.shadowSeries.futures = [];
+    model.shadowSeries.projected = [];
+    model.shadowSeries.baseline = [];
+    model.shadowSeries.points = [];
+    model.shadowSeries.ghost = null;
+    model.contextualActual = [];
+
+    const options = createCatchupChartOptions(model);
+    const windows = options.dataZoom.map(({ startValue, endValue }) => ({
+      startValue,
+      endValue,
+    }));
+
+    expect(windows).toEqual([
+      { startValue: MARKET_START_MS, endValue: MARKET_START_MS + 60_000 },
+      { startValue: MARKET_START_MS, endValue: MARKET_START_MS + 60_000 },
+    ]);
+  });
+
+  it("allows the zoom controls to expand across the full five-minute domain", () => {
+    const options = createCatchupChartOptions(chartModel(), {
+      dataZoomWindow: {
+        startValue: MARKET_START_MS,
+        endValue: MARKET_END_MS,
+      },
+    });
+
+    expect(options.dataZoom).toHaveLength(2);
+    for (const zoom of options.dataZoom) {
+      expect(zoom).toMatchObject({
+        startValue: MARKET_START_MS,
+        endValue: MARKET_END_MS,
+        minValueSpan: 5_000,
+      });
+      expect(zoom.maxValueSpan).toBeUndefined();
+    }
   });
 
   it("keeps target-aligned price lines unsmoothed and disconnected across null gaps", () => {

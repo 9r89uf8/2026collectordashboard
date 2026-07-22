@@ -29,6 +29,11 @@ export const FORECAST_PATH_NOTE =
   "Dashed: independent three-second target projections, not a continuous path.";
 export const FUTURES_PATH_NOTE =
   "Dotted: persisted futures snapshots captured when forecasts were generated, plotted at target time for comparison.";
+export const DEFAULT_VISIBLE_WINDOW_MS = 60_000;
+export const CHART_DATA_ZOOM_IDS = Object.freeze({
+  slider: "price-timeline-slider",
+  inside: "price-timeline-inside",
+});
 
 const FINANCIAL_FIELDS = Object.freeze({
   actual: ["actualDecimal", "actual_chainlink", "actual"],
@@ -545,6 +550,114 @@ function pointsInsideMarket(data, market) {
   );
 }
 
+function latestAvailableTarget(dataGroups) {
+  let latest = null;
+  for (const data of dataGroups) {
+    for (const datum of data ?? []) {
+      const targetMs = datum?.value?.[0];
+      const plotValue = datum?.value?.[1];
+      if (!Number.isFinite(targetMs) || !Number.isFinite(plotValue)) continue;
+      latest = latest === null ? targetMs : Math.max(latest, targetMs);
+    }
+  }
+  return latest;
+}
+
+function clamp(value, minimum, maximum) {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function defaultZoomWindow(market, latestTargetMs) {
+  const durationMs = market.endMs - market.startMs;
+  const visibleDurationMs = Math.min(DEFAULT_VISIBLE_WINDOW_MS, durationMs);
+  if (latestTargetMs === null) {
+    return {
+      startValue: market.startMs,
+      endValue: market.startMs + visibleDurationMs,
+    };
+  }
+
+  const endValue = clamp(
+    Math.max(latestTargetMs, market.startMs + visibleDurationMs),
+    market.startMs + visibleDurationMs,
+    market.endMs,
+  );
+  return { startValue: endValue - visibleDurationMs, endValue };
+}
+
+function resolveZoomWindow(market, latestTargetMs, suppliedWindow) {
+  const fallback = defaultZoomWindow(market, latestTargetMs);
+  const suppliedStart = suppliedWindow?.startValue;
+  const suppliedEnd = suppliedWindow?.endValue;
+  if (!Number.isFinite(suppliedStart) || !Number.isFinite(suppliedEnd)) {
+    return fallback;
+  }
+
+  const startValue = clamp(suppliedStart, market.startMs, market.endMs);
+  const endValue = clamp(suppliedEnd, market.startMs, market.endMs);
+  return endValue > startValue ? { startValue, endValue } : fallback;
+}
+
+function dataZoomOptions({ market, zoomWindow, palette, compact }) {
+  const common = {
+    xAxisIndex: 0,
+    // Preserve full-width series such as the two-endpoint opening threshold;
+    // DataZoom changes only the visible horizontal axis window.
+    filterMode: "none",
+    minValueSpan: 5_000,
+    startValue: zoomWindow.startValue,
+    endValue: zoomWindow.endValue,
+  };
+  return [
+    {
+      ...common,
+      id: CHART_DATA_ZOOM_IDS.slider,
+      type: "slider",
+      show: true,
+      realtime: true,
+      bottom: compact ? 7 : 9,
+      height: compact ? 20 : 22,
+      brushSelect: false,
+      showDataShadow: false,
+      showDetail: true,
+      borderColor: palette.grid,
+      backgroundColor: palette.panel,
+      fillerColor: "rgba(66, 199, 232, 0.16)",
+      handleSize: "92%",
+      handleStyle: {
+        color: palette.panelRaised,
+        borderColor: palette.actual,
+        borderWidth: 1,
+      },
+      moveHandleSize: 5,
+      moveHandleStyle: { color: palette.muted, opacity: 0.72 },
+      textStyle: {
+        color: palette.muted,
+        fontSize: 10,
+        fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
+      },
+      emphasis: {
+        handleStyle: { color: palette.panelRaised, borderColor: palette.text },
+        moveHandleStyle: { color: palette.actual },
+      },
+      labelFormatter(value) {
+        const timestampMs = typeof value === "number" ? value : Number(value);
+        return formatElapsed(timestampMs, market.startMs);
+      },
+    },
+    {
+      ...common,
+      id: CHART_DATA_ZOOM_IDS.inside,
+      type: "inside",
+      zoomOnMouseWheel: "ctrl",
+      moveOnMouseMove: true,
+      moveOnMouseWheel: "shift",
+      preventDefaultMouseMove: true,
+      throttle: 24,
+    },
+  ];
+}
+
 function evidenceKey(item) {
   if (!item || typeof item !== "object") return null;
   if (item.key) return String(item.key);
@@ -717,11 +830,13 @@ function visibleSeriesDescription({
 }
 
 function ariaDescription(model, market, seriesState) {
-  if (model.ariaDescription) return model.ariaDescription;
+  const navigation =
+    "The five-minute timeline is horizontally scrollable and zoomable: use the slider or drag to pan, Ctrl+wheel to zoom, and Shift+wheel to pan; ordinary wheel scrolling is not captured.";
+  if (model.ariaDescription) return `${model.ariaDescription} ${navigation}`;
   const visible = visibleSeriesDescription(seriesState);
   return `Oracle Catch-Up chart for market ${market.marketId ?? "unknown"}, from ${formatUtcWindowTimestamp(
     market.startMs,
-  )} through ${formatUtcWindowTimestamp(market.endMs)}. The x-axis is elapsed market time from zero to five minutes. Visible series: ${visible}. Projected values are independent target forecasts, not a predicted continuous path.`;
+  )} through ${formatUtcWindowTimestamp(market.endMs)}. The x-axis is elapsed market time from zero to five minutes. Visible series: ${visible}. Projected values are independent target forecasts, not a predicted continuous path. ${navigation}`;
 }
 
 /**
@@ -849,6 +964,19 @@ export function createCatchupChartOptions(model, runtime = {}) {
   if (threshold) series.push(thresholdSeries(threshold, market, palette, !compact));
   const liveGhostSeries = ghostSeries(ghost, metadataByTarget, palette);
   if (liveGhostSeries) series.push(liveGhostSeries);
+  const latestTargetMs = latestAvailableTarget([
+    actualData,
+    futuresData,
+    projectedData,
+    baselineData,
+    contextData,
+    liveGhostSeries?.data,
+  ]);
+  const zoomWindow = resolveZoomWindow(
+    market,
+    latestTargetMs,
+    runtime.dataZoomWindow,
+  );
 
   const noteTop = 40;
   const noteWidth = Math.max(240, containerWidth - (compact ? 42 : 80));
@@ -893,10 +1021,11 @@ export function createCatchupChartOptions(model, runtime = {}) {
     grid: {
       top: chartTop,
       right: compact ? 13 : threshold ? 128 : 24,
-      bottom: compact ? 18 : 20,
+      bottom: compact ? 72 : 76,
       left: compact ? 10 : 18,
       containLabel: true,
     },
+    dataZoom: dataZoomOptions({ market, zoomWindow, palette, compact }),
     legend: {
       show: true,
       type: "scroll",
@@ -989,9 +1118,9 @@ export function createCatchupChartOptions(model, runtime = {}) {
       type: "time",
       min: market.startMs,
       max: market.endMs,
-      minInterval: 60_000,
+      minInterval: 1_000,
       maxInterval: 60_000,
-      splitNumber: 5,
+      splitNumber: 6,
       boundaryGap: false,
       axisLine: {
         show: true,

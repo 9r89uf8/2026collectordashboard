@@ -68,11 +68,11 @@ export function mountAppShell(root) {
               <p class="chart-kicker">Target-time comparison</p>
               <h2 class="chart-title" id="chart-title" data-ref="chart-title">Actual vs projected Chainlink and forecast futures</h2>
             </div>
-            <p class="chart-meta mono" data-ref="chart-meta">Fixed 05:00 UTC window</p>
+            <p class="chart-meta mono" data-ref="chart-meta">Scrollable 05:00 · starts at 60s</p>
           </div>
 
           <div class="chart-stage" data-ref="chart-stage" aria-busy="true">
-            <div class="chart-canvas" data-ref="chart" role="img" aria-label="Actual vs projected Chainlink and forecast futures chart"></div>
+            <div class="chart-canvas" data-ref="chart" role="img" aria-label="Horizontally scrollable actual vs projected Chainlink and forecast futures chart. Use the timeline control to inspect the full five-minute market."></div>
             <div class="chart-empty-state" data-ref="chart-empty">
               <div class="empty-state-orbit" aria-hidden="true"></div>
               <strong data-ref="empty-title">Waiting for market evidence</strong>

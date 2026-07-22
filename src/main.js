@@ -487,7 +487,10 @@ class DashboardApplication {
 
     this.renderClock()
     this.refs['chart-title'].textContent = chartTitle
-    this.refs.chart.setAttribute('aria-label', `${chartTitle} chart`)
+    this.refs.chart.setAttribute(
+      'aria-label',
+      `Horizontally scrollable ${chartTitle} chart. Use the timeline control to inspect the full five-minute market.`,
+    )
     renderMarketControls(this.refs, {
       mode: state.mode,
       market: data?.market || state.market,
@@ -554,7 +557,7 @@ class DashboardApplication {
       ? 'The fixed market window is ready and will grow as observations mature.'
       : 'This market has no paired evaluations or one-second actual context to plot.'
 
-    this.refs['chart-meta'].textContent = `Market ${market.marketId ?? '—'} · ${shadow.stats.scored} scored · fixed 05:00`
+    this.refs['chart-meta'].textContent = `Market ${market.marketId ?? '—'} · ${shadow.stats.scored} scored · scrollable 05:00 · starts at 60s`
     const futuresAvailable = futures.filter(
       (point) => point?.separator !== true && Number.isFinite(point?.plotValue),
     ).length
